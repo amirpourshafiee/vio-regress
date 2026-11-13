@@ -133,3 +133,33 @@ def test_ate_posyaw_does_not_absorb_gravity_tilt():
     posyaw = ate(est, gt, align="posyaw")["rmse"]
     assert posyaw > 0.01  # tilt survives alignment (guards against a silent switch to se3)
     assert posyaw == pytest.approx(_best_posyaw_rmse(est.p, gt.p), rel=1e-3)
+
+
+def _line(n: int, speed: float) -> Trajectory:
+    """Straight line along x, identity orientation. Time step 0.25 s is exact in
+    binary floating point, so a 1.0 s window is exactly 4 samples."""
+    t = np.arange(n) * 0.25
+    p = np.column_stack([speed * t, np.zeros(n), np.zeros(n)])
+    return Trajectory(t, p, np.tile([0.0, 0.0, 0.0, 1.0], (n, 1)))
+
+
+def test_rpe_equals_known_constant_drift():
+    """Estimate moves at 1.03 m/s, truth at 1.00 m/s. Over every 1 s window the
+    relative translation differs by exactly 0.03 m, so rmse = mean = max = 0.03.
+    Hand derivation, no shared code: error = (v_est - v_gt) * delta_s."""
+    n = 200
+    out = rpe(_line(n, 1.03), _line(n, 1.00), delta_s=1.0)
+    assert out["ok"]
+    assert out["n"] == n - 4  # the last 4 samples have no partner 1 s later
+    for key in ("rmse", "mean", "max"):
+        assert out[key] == pytest.approx(0.03, abs=1e-12)
+
+
+def test_rpe_ignores_constant_position_offset_but_not_drift():
+    """RPE is blind to a fixed offset (relative motion is unchanged) and must
+    not be blind to drift. Together with the test above this stops an
+    always-zero rpe() from passing the alignment-free test."""
+    gt = _line(200, 1.0)
+    offset = Trajectory(gt.t, gt.p + np.array([0.5, -0.2, 0.1]), gt.q)
+    assert rpe(offset, gt)["rmse"] < 1e-12
+    assert rpe(_line(200, 1.01), gt)["rmse"] > 1e-3
