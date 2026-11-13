@@ -30,7 +30,7 @@ def load_euroc_gt(path: str | Path) -> Trajectory:
     Columns: timestamp[ns], p_x, p_y, p_z, q_w, q_x, q_y, q_z, then velocities
     and biases, which we ignore.
     """
-    a = np.loadtxt(path, delimiter=",", skiprows=1, usecols=range(8))
+    a = np.loadtxt(path, delimiter=",", skiprows=1, usecols=range(8), ndmin=2)
     return Trajectory(t=a[:, 0] * 1e-9, p=a[:, 1:4], q=a[:, [5, 6, 7, 4]])
 
 
