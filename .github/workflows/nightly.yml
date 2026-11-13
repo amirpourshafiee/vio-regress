@@ -1,7 +1,10 @@
 name: nightly-vio
 on:
-  schedule:
-    - cron: "17 9 * * *"
+  # The daily schedule is paused: scripts/fetch_euroc.sh and scripts/run_sequence.sh
+  # do not exist yet, so a scheduled run would fail every night. Restore
+  #   schedule:
+  #     - cron: "17 9 * * *"
+  # in session S5, once the runner scripts and the pinned image work.
   workflow_dispatch:
     inputs:
       sequences:
