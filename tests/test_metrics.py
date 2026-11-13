@@ -108,3 +108,28 @@ def test_matches_evo():
     ape.process_data((to_evo(gt), e))
     evo_rmse = ape.get_statistic(evo_metrics.StatisticsType.rmse)
     assert ate(est, gt, align="se3")["rmse"] == pytest.approx(evo_rmse, rel=1e-6)
+
+
+def _best_posyaw_rmse(est_p: np.ndarray, gt_p: np.ndarray) -> float:
+    """Independent oracle: brute-force the yaw angle on a fine grid, with the
+    translation fixed by matching centroids (optimal for any fixed rotation).
+    Shares no code with yaw_align, so it cannot repeat its mistakes."""
+    a, b = est_p - est_p.mean(0), gt_p - gt_p.mean(0)
+    best = np.inf
+    for th in np.linspace(-np.pi, np.pi, 7201):  # 0.05 degree steps
+        c, s = np.cos(th), np.sin(th)
+        rot = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
+        best = min(best, float(np.sqrt(np.mean(np.sum((a @ rot.T - b) ** 2, axis=1)))))
+    return best
+
+
+def test_ate_posyaw_does_not_absorb_gravity_tilt():
+    """A 5 degree roll is a real VIO error because gravity is observable, so
+    posyaw must report it. A looser alignment (se3) would hide it."""
+    gt = make_traj()
+    tilt = Rotation.from_euler("x", 5, degrees=True).as_matrix()
+    est = transform(gt, tilt, np.array([1.0, 2.0, 0.0]))
+    assert ate(est, gt, align="se3")["rmse"] < 1e-9  # a pure rigid change: fully absorbable
+    posyaw = ate(est, gt, align="posyaw")["rmse"]
+    assert posyaw > 0.01  # tilt survives alignment (guards against a silent switch to se3)
+    assert posyaw == pytest.approx(_best_posyaw_rmse(est.p, gt.p), rel=1e-3)
