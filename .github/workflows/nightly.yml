@@ -1,0 +1,52 @@
+name: nightly-vio
+on:
+  schedule:
+    - cron: "17 9 * * *"
+  workflow_dispatch:
+    inputs:
+      sequences:
+        description: "Space separated EuRoC sequence names"
+        default: "MH_01_easy V1_01_easy"
+permissions:
+  contents: read
+jobs:
+  vio:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      SEQS: ${{ inputs.sequences || 'MH_01_easy V1_01_easy' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        id: data
+        with:
+          path: data/euroc
+          key: euroc-v1-${{ hashFiles('scripts/fetch_euroc.sh') }}
+      - if: steps.data.outputs.cache-hit != 'true'
+        run: bash scripts/fetch_euroc.sh data/euroc ${SEQS}
+      - name: Build the pinned VIO image
+        run: docker build -t vioreg-openvins -f docker/Dockerfile.openvins docker
+      - name: Run VIO on each sequence
+        run: |
+          for s in ${SEQS}; do bash scripts/run_sequence.sh "$s" results; done
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - name: Score and gate
+        env:
+          HARNESS_REQUIRE_RESULTS: "1"
+        run: |
+          python -m vioreg.score --seqs ${SEQS} --out results
+          pytest -m sequence --junitxml=junit-gate.xml
+      - name: Job summary
+        if: always()
+        run: python -m vioreg.report results >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vio-results
+          path: |
+            results/
+            junit-gate.xml

@@ -1,0 +1,23 @@
+[project]
+name = "vioreg"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = ["numpy", "scipy", "pyyaml", "pillow", "scikit-learn"]
+
+[project.optional-dependencies]
+dev = ["pytest", "evo", "anthropic"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "sequence: runs the metric gate on one EuRoC sequence (needs results/)",
+  "slow: needs the VIO binary or dataset",
+]
+addopts = "-ra --strict-markers"

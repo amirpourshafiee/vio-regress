@@ -1,0 +1,2 @@
+{"sequence": "MH_03_medium", "note": "hand-made golden result for gate-logic tests only, NOT a real VIO run",
+ "ate": {"ok": true, "rmse": 0.05, "coverage": 1.0}, "rpe": {"ok": true, "rmse": 0.02}}

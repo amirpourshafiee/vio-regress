@@ -1,0 +1,14 @@
+# UNTESTED SKELETON. Follows the OpenVINS install guide for ROS 1 Noetic on Ubuntu 20.04.
+# Pin OV_REF to a commit SHA you have verified. A moving branch makes every
+# "regression" ambiguous: was it your harness or their commit?
+FROM osrf/ros:noetic-desktop-full
+ARG OV_REF=REPLACE_WITH_A_COMMIT_SHA
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      git build-essential python3-catkin-tools python3-osrf-pycommon \
+      libeigen3-dev libboost-all-dev libceres-dev \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /ws
+RUN mkdir -p src && git clone https://github.com/rpng/open_vins.git src/open_vins \
+    && git -C src/open_vins checkout ${OV_REF}
+RUN . /opt/ros/noetic/setup.sh && catkin build -DCMAKE_BUILD_TYPE=Release

@@ -1,0 +1,10 @@
+# Limits are DERIVED from baseline runs (see scripts/make_thresholds.py), then
+# reviewed by a human and committed. Never loosen a limit to make CI green
+# without a commit message that says why.
+defaults:
+  align: posyaw
+  min_coverage: 0.95
+sequences:
+  MH_01_easy:      {max_ate_m: 0.15, max_rpe_m: 0.06, skip_s: 40}
+  MH_03_medium:    {max_ate_m: 0.25, max_rpe_m: 0.08, skip_s: 15}
+  V1_01_easy:      {max_ate_m: 0.15, max_rpe_m: 0.06, skip_s: 0}
