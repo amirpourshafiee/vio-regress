@@ -29,13 +29,16 @@ Provenance:
   image_digest   the image ID from `docker image inspect` (sha256:...)
   harness_commit `git rev-parse HEAD`, with "-dirty" appended if src/, configs/ or
                  scripts/ have any uncommitted change, untracked files included
-  config_hash    sha1 of config/<config>/estimator_config.yaml read from inside the image,
-                 i.e. the file the estimator actually loaded
+  config_hash    sha1 over estimator_config.yaml + the kalibr IMU and IMU-camera yamls it
+                 references, contents concatenated in sorted file-name order (see
+                 vioreg/config_hash.py). Read from the config baked into the image, or from
+                 --config-dir when the runs mounted an override. Every run<k>.config_hash
+                 sidecar written by scripts/run_sequence.sh must equal it, or the result
+                 fails closed: a run made with another config is never scored under this hash.
 """
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import math
 import re
@@ -45,6 +48,7 @@ from pathlib import Path
 
 import numpy as np
 
+from . import config_hash as ch
 from .euroc_io import load_euroc_gt, load_tum
 from .metrics import ate, rpe
 
@@ -66,7 +70,8 @@ def _run(cmd: list[str], **kw) -> bytes:
     return subprocess.run(cmd, check=True, capture_output=True, timeout=120, **kw).stdout
 
 
-def collect_provenance(image: str, config_name: str, repo: Path = ROOT) -> dict:
+def collect_provenance(image: str, config_name: str, repo: Path = ROOT,
+                       config_dir: Path | None = None) -> dict:
     """Each field is None if it cannot be determined; the scorer then fails closed."""
     prov: dict = {"backend": BACKEND, **{k: None for k in PROVENANCE_KEYS}}
     try:
@@ -77,11 +82,12 @@ def collect_provenance(image: str, config_name: str, repo: Path = ROOT) -> dict:
     except Exception as e:  # noqa: BLE001 - any failure means "unknown", never a guess
         print(f"score: cannot inspect image {image}: {e}", file=sys.stderr)
     try:
-        cfg = _run(["docker", "run", "--rm", "--entrypoint", "cat", image,
-                    f"/ws/src/open_vins/config/{config_name}/estimator_config.yaml"])
-        prov["config_hash"] = hashlib.sha1(cfg).hexdigest() if cfg else None
+        read = (ch.dir_reader(config_dir) if config_dir is not None
+                else ch.image_reader(image, config_name, run=_run))
+        prov["config_hash"] = ch.config_hash(read)
     except Exception as e:  # noqa: BLE001
-        print(f"score: cannot read estimator_config.yaml from {image}: {e}", file=sys.stderr)
+        src = config_dir if config_dir is not None else f"{image}:{config_name}"
+        print(f"score: cannot hash config from {src}: {e}", file=sys.stderr)
     try:
         sha = _run(["git", "-C", str(repo), "rev-parse", "HEAD"]).decode().strip()
         # Untracked files count too: a new uncommitted module in src/ would otherwise
@@ -167,6 +173,11 @@ def score_sequence(seq: str, results: Path, gt_csv: Path, provenance: dict,
     for k in PROVENANCE_KEYS:
         if not provenance.get(k):
             reasons.append(f"provenance field {k} missing")
+    for k, _ in runs:
+        side = seq_dir / f"run{k}.config_hash"
+        if side.exists() and side.read_text().strip() != provenance.get("config_hash"):
+            reasons.append(f"run{k} used config {side.read_text().strip()[:12]}, "
+                           f"not the recorded {str(provenance.get('config_hash'))[:12]}")
 
     per_run = [float(s["ate"]["rmse"]) if s else None for s in scored]
     ok = not reasons
@@ -215,10 +226,14 @@ def main(argv=None) -> int:
     ap.add_argument("--thresholds", default=str(ROOT / "configs" / "thresholds.yaml"))
     ap.add_argument("--image", default="vioreg-openvins:v2.7")
     ap.add_argument("--config-name", default="euroc_mav")
+    ap.add_argument("--config-dir", type=Path, default=None,
+                    help="hash this local config dir (the one the runs mounted) "
+                         "instead of the config baked into the image")
     a = ap.parse_args(argv)
 
     cfg = yaml.safe_load(Path(a.thresholds).read_text())
-    prov = collect_provenance(image=a.image, config_name=a.config_name)
+    prov = collect_provenance(image=a.image, config_name=a.config_name,
+                              config_dir=a.config_dir)
     rc = 0
     for seq in a.seqs:
         if seq not in cfg.get("sequences", {}):

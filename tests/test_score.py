@@ -274,3 +274,20 @@ def test_no_numpy_arrays_or_nan_leak_into_json(layout):
     json.dumps(out, allow_nan=False)  # raises on ndarray / numpy scalar / NaN
     text = (res / f"{SEQ}.json").read_text()
     assert "per_pose" not in text and "NaN" not in text
+
+
+# ---------------------------------------------------------------- config sidecars
+def test_run_config_hash_sidecar_must_match_recorded_hash(layout):
+    """run_sequence.sh writes run<k>.config_hash with the hash of the config the run
+    actually used. A run made with a different config (e.g. a mounted override) must not
+    be scored under the image's hash."""
+    gt, gt_csv, res = layout
+    save_tum(est_with_known_error(gt, 0.02), res / SEQ / "run1.tum")
+    save_tum(est_with_known_error(gt, 0.02), res / SEQ / "run2.tum")
+    (res / SEQ / "run1.config_hash").write_text(PROV["config_hash"] + "\n")
+    (res / SEQ / "run2.config_hash").write_text(PROV["config_hash"] + "\n")
+    _, ok = run_score(res, gt_csv)
+    assert ok
+    (res / SEQ / "run2.config_hash").write_text("e" * 40 + "\n")
+    out, ok = run_score(res, gt_csv)
+    assert_failed_result(res, out, ok)
