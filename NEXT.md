@@ -1,5 +1,5 @@
-Done (S1): CLAUDE.md; OpenVINS v2.7 image (93adc241, 7.86 GB); fetch_euroc.sh range-fetch (MH_01_easy 3.61 GB of 12.7 GB).
-Done (S1): MH_01_easy serial run -> results/MH_01_easy/run1.tum, 2767 poses; ATE posyaw rmse 0.091 m, coverage 0.973, scale 1.008.
-Next (S2): scripts/run_sequence.sh wrapping the S1 docker command, writing result JSON with vio_commit/image_digest/harness_commit/config_hash.
-Next: strip -g3 debug info from devel/ (802 MB); prune 3 GB build cache; disk is ~4.8 GB free with image + one bag.
-Open: is RC 429 rate-limiting a CI risk (cache data/euroc)? commit or ignore poetry.lock? keep bag_start=40 vs skip_s=40 both?
+Done (S1): pinned OpenVINS v2.7 image; fetch_euroc.sh; MH_01_easy run1.tum, ATE posyaw 0.0909 m, coverage 0.973.
+Done (S2): score.py writes the frozen-contract results/<seq>.json (median run, fail closed); real MH_01_easy scores OK and passes the gate. vioreg/evo/ov_eval ATE agree to 1e-9 at matched settings (docs/crosscheck.md).
+Next: scripts/run_sequence.sh (S1 docker command + run<k>.wall_s sidecar), then 5+ repeat runs per sequence for thresholds via make_thresholds.py.
+Next: strip -g3 debug info from the image (devel/ 802 MB); disk is ~7 GB free.
+Open: config_hash covers estimator_config.yaml only, not the kalibr yamls; extend the contract? RC 429 risk in CI? poetry.lock?
