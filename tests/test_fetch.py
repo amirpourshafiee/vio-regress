@@ -113,3 +113,23 @@ def test_size_guard_refuses_large_plans_without_consent():
         fetch.check_budget(6e9, max_bytes=5e9, consent=False)
     fetch.check_budget(6e9, max_bytes=5e9, consent=True)
     fetch.check_budget(2e9, max_bytes=5e9, consent=False)
+
+
+def test_manifest_with_missing_file_triggers_refetch(tmp_path):
+    """S3 deletes the raw bag after scoring. A later fetch must not trust the stale
+    manifest and silently skip: any listed file missing means fetch again."""
+    tr = MemTransport(make_outer())
+    fetch.fetch_sequence("MH_01_easy", tmp_path, transport=tr, url="mem://x")
+    (tmp_path / "MH_01_easy" / "MH_01_easy.bag").unlink()
+    tr.requests = 0
+    fetch.fetch_sequence("MH_01_easy", tmp_path, transport=tr, url="mem://x")
+    assert tr.requests > 0
+    assert (tmp_path / "MH_01_easy" / "MH_01_easy.bag").read_bytes() == BAG
+
+
+def test_is_complete(tmp_path):
+    assert not fetch.is_complete(tmp_path / "MH_01_easy")
+    fetch.fetch_sequence("MH_01_easy", tmp_path, transport=MemTransport(make_outer()), url="mem://x")
+    assert fetch.is_complete(tmp_path / "MH_01_easy")
+    (tmp_path / "MH_01_easy" / "MH_01_easy.bag").write_bytes(b"truncated")
+    assert not fetch.is_complete(tmp_path / "MH_01_easy")  # size mismatch
