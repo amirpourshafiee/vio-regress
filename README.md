@@ -1,5 +1,7 @@
 # vioreg starter
 
+**Write-up:** [vioreg part 1: a regression gate for visual-inertial odometry](docs/WRITEUP.md)
+
 Tested starter modules from the build guide: metrics, gate, faults, windows, judge, kappa.
 Not included on purpose: runner scripts, score.py, report.py, make_thresholds.py (sessions S1 to S4).
 Dockerfile and workflows are UNTESTED skeletons.
