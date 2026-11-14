@@ -16,7 +16,7 @@ design.
 | | GitHub-hosted runner, public repo | Our job |
 |---|---|---|
 | CPU / RAM | **4 CPU, 16 GB** ([runners](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)) | build used 4 cores, about 6 GB RAM at peak |
-| Disk | **14 GB SSD** (same page) | image build peaks near **10 GB**; bag 2.7 GB plus a 1.6 GB temp zip while fetching |
+| Disk | **14 GB SSD** (same page; measured 145 GB in run 43573219393, see S5b) | image build peaks near **10 GB**; bag 2.7 GB plus a 1.6 GB temp zip while fetching |
 | Time | **6 h per job** ([limits](https://docs.github.com/en/actions/reference/limits)) | build 15–20 min, fetch ~5 min, 2 runs × ~45 s |
 | Cost | standard runners are **free and unlimited for public repos** ([billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions); this repo is public) | n/a |
 | Cache | 10 GB per repo (billing page) | not used: the dataset is not cached |
@@ -96,10 +96,30 @@ exactly** (RPE and ATE ratio 1.000). Only the key differed.
   is only the three `image_digest` lines and the provenance comment. The gate on those runs:
   PASS 3, including the ATE geomean.
 
+**First green nightly (run 43573219393, 2026-11-14, `main` at `dcef94c`, defaults: all 3
+sequences, 2 runs each, 13 min):** gate **PASS 3**, 5 passed, 0 skipped. That's the three
+per-sequence checks plus the ATE geomean. Every key matched (`image_digest sha256:29b31b7a`,
+config `5adca0e7`). Both runs of every sequence reproduced `baselines/<seq>.tum` exactly,
+with RPE and ATE ratio 1.000.
+- **Different CPU, same poses.** The runner was an Intel Xeon Platinum 8573C (4 vCPU,
+  AVX-512). The baseline host and the S5a runner were an AMD EPYC 7763 (no AVX-512). That
+  is evidence for one CPU pair, not a guarantee for every host.
+- **The storage-mode problem showed up in practice.** On the runner, `docker image inspect`
+  reported `.Id` = `sha256:a19e5ab0…` (the config digest, as the publish build logged), not
+  the registry digest `sha256:29b31b7a…`. The harness recorded the registry digest, so the
+  key matched. Under the pre-S5b scheme this run would have been NEEDS-REBASELINE again.
+
 Disk on the runner: the pull is about 1.55 GB compressed and 7.8 GB unpacked. Each
 sequence then peaks at about 3 GB while fetching (bag 2.5–2.7 GB, after a 1.6 GB temp
 zip that is deleted first). Deleting each bag before the next fetch keeps the peak at one
 bag. The loop also refuses to fetch below 5 GB free.
+
+**Measured (run 43573219393): the runner's disk was not 14 GB.** `/` was a 145 GB
+`/dev/root` with 86 GB free at the start, and 98 GB free after the "Free disk" step and the
+pull. Each fetch used about +3 GB, and deleting the bag gave it back (47 → 50 → 47 GB used).
+So the 14 GB budget in the table above (from the documented runner spec) was very
+conservative for this run. Hosted runner sizes can change, so the "Free disk" step and the
+5 GB guard stay as cheap insurance.
 
 **Changing the image** means a new publish, a new `docker/IMAGE_REF`, and a deliberate
 re-baseline. If the new image reproduces the baseline poses, re-key as above. If it does
