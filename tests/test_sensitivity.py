@@ -131,3 +131,41 @@ def test_cross_sequence_max_and_realtime_separate():
     assert x["legitimate"]["ate_max"] == pytest.approx(max(1.0, (1.5 * 0.8) ** 0.5))
     assert "rt_rate_1.0" not in x["legitimate"]["included"]
     assert x["realtime"]["included"] == ["rt_rate_1.0"]
+
+
+# ---------------------------------------------------------------- S4: signal table (gate's view)
+def test_known_bad_group():
+    assert sensitivity.group_of("bad_num_pts_50") == "known_bad"
+    assert "known_bad" not in sensitivity.LEGITIMATE
+
+
+def three_seq():
+    def var(group, ate, rpe, cov=0.97, n=2700, failed=0, runs=3):
+        return {"group": group, "ate_median_m": ate, "rpe_median_m": rpe, "runs": runs,
+                "failed": failed, "per_run_ate_m": [ate] * runs, "coverage_min": cov, "n_min": n}
+    seqs = {}
+    for s, (a, r) in {"MH_01_easy": (0.10, 0.020), "V1_01_easy": (0.05, 0.040),
+                      "MH_03_medium": (0.09, 0.045)}.items():
+        seqs[s] = {"s3_baseline_ate_m": a, "s3_baseline_rpe_m": r, "s3_baseline_coverage": 0.97,
+                   "s3_baseline_n": 2700, "variants": {
+                       "base": var("baseline", a, r),
+                       "num_pts_180": var("config", a * 1.2, r * 1.01),
+                       "bad_num_pts_50": var("known_bad", a * 2.0, r * 1.5, cov=0.90, n=2600)}}
+    seqs["MH_01_easy"]["variants"]["bag_start_42"] = var("replay_offset", 0.08, 0.020)
+    seqs["V1_01_easy"]["variants"]["bag_start_2"] = var("replay_offset", 0.05, 0.040)
+    seqs["MH_03_medium"]["variants"]["bag_start_19.5"] = var("replay_offset", 0.09, 0.045)
+    seqs["MH_01_easy"]["variants"]["bag_start_38"] = var("replay_offset", 0.12, 0.020)
+    return {"sequences": seqs}
+
+
+def test_signal_table_matches_the_gate_view():
+    t = {r["name"]: r for r in sensitivity.signal_table(three_seq(), ["MH_01_easy", "V1_01_easy", "MH_03_medium"])}
+    assert t["num_pts_180"]["ate_geomean"] == pytest.approx(1.2)
+    assert t["num_pts_180"]["rpe_ratio_max"] == pytest.approx(1.01)
+    bad = t["bad_num_pts_50"]
+    assert bad["group"] == "known_bad" and bad["ate_geomean"] == pytest.approx(2.0)
+    assert bad["rpe_ratio_max"] == pytest.approx(1.5)
+    assert any("coverage" in h for h in bad["hard"]) and any("pose count" in h for h in bad["hard"])
+    assert t["num_pts_180"]["hard"] == []
+    assert t["bag_start_+2s"]["members"]["MH_03_medium"] == "bag_start_19.5"
+    assert "bag_start_38" not in t  # no V1_01 counterpart: cannot enter a 3-sequence aggregate

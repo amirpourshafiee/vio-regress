@@ -30,6 +30,7 @@ GROUPS = [
     (r"^gravity_mag_[\d.]+$", "innocent"),
     (r"^rt_rate_[\d.]+$", "realtime_rate"),
     (r"^rt_load_rate_[\d.]+$", "realtime_load"),
+    (r"^bad_.+$", "known_bad"),
 ]
 LEGITIMATE = {"baseline", "replay_offset", "config", "innocent"}
 
@@ -88,6 +89,7 @@ def analyse(root: Path, seqs, data_root: Path, thresholds: dict, s3_baseline: di
                       "rpe_median_m": s["rpe_rmse"]["median"],
                       "per_run_rpe_m": [r["rpe_rmse"] for r in runs],
                       "coverage_min": s["coverage_min"],
+                      "n_min": min((r["n"] for r in runs if r["ok"]), default=None),
                       "delta_m": None if med is None else med - base,
                       "delta_pct": None if med is None else 100.0 * (med - base) / base,
                       "wall_median_s": s["wall_s"]["median"]}
@@ -139,7 +141,8 @@ def knob_rows(analysis: dict) -> list[dict]:
 
 # Variants with the same MEANING on both sequences. bag_start values differ per sequence
 # (MH_01 38/42 around 40; V1_01 1/2 above 0); only "+2 s" exists on both.
-SPECIAL_PAIRS = {"bag_start_+2s": {"MH_01_easy": "bag_start_42", "V1_01_easy": "bag_start_2"}}
+SPECIAL_PAIRS = {"bag_start_+2s": {"MH_01_easy": "bag_start_42", "V1_01_easy": "bag_start_2",
+                                   "MH_03_medium": "bag_start_19.5"}}
 
 
 def cross_sequence(analysis: dict, seqs: list[str]) -> dict:
@@ -149,8 +152,8 @@ def cross_sequence(analysis: dict, seqs: list[str]) -> dict:
     common = {v for v in common if group_of(v) != "replay_offset"}
     pairs_def = {v: {s: v for s in seqs} for v in common}
     for name, members in SPECIAL_PAIRS.items():
-        if set(members) == set(seqs) and all(members[s] in sq[s]["variants"] for s in seqs):
-            pairs_def[name] = dict(members)
+        if set(seqs) <= set(members) and all(members[s] in sq[s]["variants"] for s in seqs):
+            pairs_def[name] = {s: members[s] for s in seqs}
     pairs = []
     for name, members in sorted(pairs_def.items()):
         ds = [sq[s]["variants"][members[s]] for s in seqs]
@@ -173,6 +176,47 @@ def cross_sequence(analysis: dict, seqs: list[str]) -> dict:
 
     return {"sequences": seqs, "pairs": pairs, "legitimate": span(LEGITIMATE),
             "realtime": span({"realtime_rate", "realtime_load"})}
+
+
+def signal_table(analysis: dict, seqs: list[str], coverage_drop_max: float = 0.01) -> list[dict]:
+    """What the v2 gate sees for each variant present on EVERY sequence: per-sequence RPE
+    ratios (and their max), the ATE geometric mean over all sequences, and hard-check
+    signals (failed runs, coverage drop, associated pose count below the S3 baseline)."""
+    x = cross_sequence(analysis, seqs)
+    rows = []
+    for p in x["pairs"]:
+        hard = []
+        for s in seqs:
+            sd = analysis["sequences"][s]
+            d = sd["variants"][p["members"][s]]
+            if d["failed"]:
+                hard.append(f"{s}: {d['failed']} failed run(s)")
+            bc, bn = sd.get("s3_baseline_coverage"), sd.get("s3_baseline_n")
+            if bc is not None and d.get("coverage_min") is not None and \
+                    d["coverage_min"] < bc - coverage_drop_max:
+                hard.append(f"{s}: coverage {d['coverage_min']:.3f} < {bc:.3f} - {coverage_drop_max}")
+            if bn is not None and d.get("n_min") is not None and d["n_min"] < bn:
+                hard.append(f"{s}: pose count {d['n_min']} < {bn}")
+        rr = [v for v in p["rpe_ratios"].values() if v is not None]
+        rows.append({**p, "rpe_ratio_max": max(rr) if rr else None, "hard": hard})
+    return rows
+
+
+def signal_markdown(rows: list[dict], seqs: list[str]) -> str:
+    short = lambda q: "_".join(q.split("_")[:2])  # noqa: E731
+    head = ("| Variant | Group | " + " | ".join(f"RPE {short(q)}" for q in seqs) +
+            " | RPE max | " + " | ".join(f"ATE {short(q)}" for q in seqs) +
+            " | **ATE geomean** | Hard-check signals |")
+    out = [head, "|" + "---|" * (2 * len(seqs) + 5)]
+    order = ["baseline", "replay_offset", "config", "innocent", "known_bad"]
+    for r in sorted((r for r in rows if r["group"] in order),
+                    key=lambda r: (order.index(r["group"]), r["name"])):
+        f = lambda v: "-" if v is None else f"{v:.3f}"  # noqa: E731
+        out.append(f"| {r['name']} | {r['group']} | " +
+                   " | ".join(f(r["rpe_ratios"][q]) for q in seqs) + f" | {f(r['rpe_ratio_max'])} | " +
+                   " | ".join(f(r["ate_ratios"][q]) for q in seqs) + f" | **{f(r['ate_geomean'])}** | " +
+                   ("; ".join(r["hard"]) or "none") + " |")
+    return "\n".join(out)
 
 
 def single_sequence_ratio_span(analysis: dict, seq: str, groups=LEGITIMATE) -> dict:
@@ -231,13 +275,19 @@ def main(argv=None) -> int:
     s3r = {s: float(np.median([x for x in b[s]["per_run_rpe_rmse"] if x is not None]))
            for s in a.seqs}
     out = analyse(a.root, a.seqs, a.data, yaml.safe_load(a.thresholds.read_text()), s3, s3r)
+    for s in a.seqs:  # hard-check references (present in baseline.json since S4)
+        if b[s].get("per_run_coverage"):
+            out["sequences"][s]["s3_baseline_coverage"] = float(min(b[s]["per_run_coverage"]))
+            out["sequences"][s]["s3_baseline_n"] = int(min(b[s]["per_run_n"]))
+    out["signal_table"] = signal_table(out, a.seqs)
     out["cross_sequence"] = cross_sequence(out, a.seqs)
     out["single_sequence_median_ratio_span"] = {s: single_sequence_ratio_span(out, s)
                                                 for s in a.seqs}
     a.out.parent.mkdir(parents=True, exist_ok=True)
     a.out.write_text(json.dumps(out, indent=2, allow_nan=False) + "\n")
     if a.markdown:
-        a.markdown.write_text(markdown_tables(out, a.seqs) + "\n")
+        a.markdown.write_text(markdown_tables(out, a.seqs) + "\n\n" +
+                              signal_markdown(out["signal_table"], a.seqs) + "\n")
     for seq, s in out["sequences"].items():
         print(f"\n{seq}  (S3 serial baseline {s['s3_baseline_ate_m'] * 1e3:.3f} mm)")
         for v, d in sorted(s["variants"].items(), key=lambda kv: (kv[1]["group"], kv[0])):
