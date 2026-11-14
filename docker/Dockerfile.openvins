@@ -30,7 +30,10 @@ RUN . /opt/ros/noetic/setup.sh \
     && catkin build -j4 --no-status --summarize \
     && rm -rf build logs
 
-LABEL org.opencontainers.image.source="https://github.com/rpng/open_vins" \
+# org.opencontainers.image.source links the GHCR package to THIS repo (S5b); the upstream
+# OpenVINS source is recorded separately.
+LABEL org.opencontainers.image.source="https://github.com/amirpourshafiee/vio-regress" \
+      vioreg.ov_upstream="https://github.com/rpng/open_vins" \
       vioreg.ov_ref="${OV_REF}"
 RUN printf '#!/bin/bash\nsource /opt/ros/noetic/setup.bash\nsource /ws/devel/setup.bash\nexec "$@"\n' \
       > /entrypoint.sh && chmod +x /entrypoint.sh
