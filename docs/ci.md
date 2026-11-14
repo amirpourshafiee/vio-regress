@@ -175,6 +175,43 @@ message say plainly that VIO quality was not measured. An unreadable status file
 a fetch failure. With no status file at all (local runs that fetch separately), the gate
 makes no fetch claim.
 
+## Red-build demo: the `fault` input (S6)
+
+nightly has an optional input **`fault`** (default empty). Empty means a normal run, with
+exactly the old behaviour: each sequence is replayed from `data/euroc`. When `fault` is set, every
+selected sequence is replayed from a **faulted copy** of its freshly fetched bag
+(`python -m vioreg.fault_cli spec "$FAULT"`, see docs/faults.md), then scored and gated as
+usual. The original bag is mounted read-only, and both bags are deleted after each sequence.
+
+- **Allowed values** (strict allow-list; `vioreg.fault_cli.SPEC_PATTERN` is checked in
+  "Validate inputs" and again by fault_cli, which also range-checks the values):
+  `blur=<odd px>`, `gamma=<γ>`, `drop-frames=<k>`, `time-offset=<ms>`,
+  `imu-noise=<σ_w>,<σ_a>`. Anything else, including spaces, `;`, `$(...)`, extra lines or
+  exponents, fails the job before anything is fetched. The input reaches the shell only
+  through `env: FAULT`.
+- **Disk:** with a fault the free-space guard asks for 8 GB per sequence (bag plus faulted
+  copy) instead of 5 GB.
+- **Recorded:** `results/injected_fault_<seq>.json` (the copy's fault.json, with params, seed,
+  the original's sha256 and the compare() summary) is uploaded with the results. The job
+  summary opens with a banner: **FAULT INJECTED: `<spec>` (red-build demo) … a QUALITY FAIL
+  below is the expected outcome, not a regression.**
+
+**Run the demo** (from `main`; Actions → nightly-vio → Run workflow):
+
+| goal | sequences | fault | expected |
+|---|---|---|---|
+| fastest red, one sequence | `MH_01_easy` | `time-offset=50` | QUALITY FAIL: `RPE ratio ≈22000 > 1.280` |
+| red by a counting check | `MH_01_easy` | `drop-frames=2` | QUALITY FAIL: `associated pose count 1371 < baseline 2746 - 4` |
+| full three-sequence red | (default) | `time-offset=50` | per-sequence RPE fails and `ATE geometric mean ratio … > 1.500` (expected; only MH_01_easy measured so far) |
+| what the gate misses | `MH_01_easy` | `gamma=2.2` or `blur=9` | PASS: these are not caught (docs/faults.md) |
+
+**How to read it:** the gate step fails, and its first line names the sequence, the verdict,
+the metric, the value and the limit, e.g.
+`MH_01_easy [QUALITY-FAIL]: RPE ratio 22338.560 > 1.280 (RPE 589455.65 mm vs baseline 26.39 mm)`.
+QUALITY-FAIL (not NEEDS-REBASELINE) shows that the key matched: same image, OpenVINS commit
+and config, so the red comes from the data alone. The summary banner names the injected fault.
+A run with an empty `fault` input and the same commit should be green.
+
 ## Pieces
 
 | Step | Command |
@@ -211,3 +248,7 @@ shellcheck from `shellcheck-py==0.10.0.1` it also lints every `run:` block) and
   defaults; job-level `if` on `refs/heads/main` in nightly and publish-image; concurrency
   without cancel; the fetch call uses `--attempts 3 --backoff-s 60 --status-dir results` and
   labels exit 75 and other failures "data fetch failed, not a quality result"
+
+- S6: optional `fault` input (default empty, via `env: FAULT`), validated against
+  `vioreg.fault_cli.SPEC_PATTERN` before use; a faulted copy only when set; no fault = the old
+  data root; both bags deleted; the summary gets `--injected-fault`

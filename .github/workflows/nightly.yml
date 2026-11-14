@@ -24,6 +24,10 @@ on:
         description: "Runs per sequence (2 shows whether runs agree with each other)"
         type: string
         default: "2"
+      fault:
+        description: "Red-build demo, empty = normal run. One fault applied to a COPY of each bag: blur=9 | gamma=2.2 | drop-frames=2 | time-offset=200 | imu-noise=0.01,0.2"
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -40,6 +44,7 @@ jobs:
     env:
       SEQS: ${{ inputs.sequences || 'MH_01_easy V1_01_easy MH_03_medium' }}
       RUNS: ${{ inputs.runs || '2' }}
+      FAULT: ${{ inputs.fault }}
     steps:
       - name: Host fingerprint (CPU model and SIMD flags)
         run: |
@@ -61,6 +66,10 @@ jobs:
           done
           [ "${#seq_list[@]}" -gt 0 ] || { echo "::error::no sequences given"; exit 1; }
           [[ "$RUNS" =~ ^[1-9]$ ]] || { echo "::error::runs must be 1..9, got: $RUNS"; exit 1; }
+          # fault: empty, or exactly one spec from the allow-list (vioreg.fault_cli.SPEC_PATTERN);
+          # value ranges are checked again by fault_cli before anything is written.
+          fre='^(imu-noise=[0-9]{1,4}(\.[0-9]{1,4})?,[0-9]{1,4}(\.[0-9]{1,4})?|gamma=[0-9]{1,4}(\.[0-9]{1,4})?|blur=[0-9]{1,4}|drop-frames=[0-9]{1,4}|time-offset=-?[0-9]{1,4}(\.[0-9]{1,4})?)$'
+          [[ -z "$FAULT" || "$FAULT" =~ $fre ]] || { echo "::error::fault is not on the allow-list: $FAULT"; exit 1; }
 
       - name: Save host fingerprint with the results
         run: |
@@ -102,14 +111,17 @@ jobs:
           read -ra seq_list <<< "$SEQS"
           rc=0
           bag=""
-          trap 'rm -f "$bag"' EXIT   # never leave a bag behind, whatever fails
+          fbag=""
+          trap 'rm -f "$bag" "$fbag"' EXIT   # never leave a bag behind, whatever fails
+          need=5000000000                # one bag plus its fetch temp file
+          [ -n "$FAULT" ] && need=8000000000   # plus the faulted copy (red-build demo)
           for s in "${seq_list[@]}"; do
             echo "::group::$s"
             bag="data/euroc/$s/$s.bag"
             echo "df before fetch ($s):"; df -h /
             avail=$(df --output=avail -B1 / | tail -1)
-            if [ "$avail" -lt 5000000000 ]; then
-              echo "::error::$s: only $((avail / 1000000)) MB free before fetching; need about 5 GB"
+            if [ "$avail" -lt "$need" ]; then
+              echo "::error::$s: only $((avail / 1000000)) MB free before fetching; need $((need / 1000000)) MB"
               rc=1
             else
               # Each request retries 429/5xx/timeouts with backoff; --attempts restarts the whole
@@ -118,7 +130,23 @@ jobs:
               bash scripts/fetch_euroc.sh data/euroc "$s" --attempts 3 --backoff-s 60 --status-dir results || fetch_rc=$?
               if [ "$fetch_rc" -eq 0 ]; then
                 echo "df after fetch ($s):"; df -h /
-                bash scripts/run_sequence.sh "$s" results || rc=1
+                data=data/euroc
+                if [ -n "$FAULT" ]; then
+                  # Red-build demo: replay a faulted COPY; the original bag is mounted read-only.
+                  if out=$(python -m vioreg.fault_cli spec "$FAULT" --seq "$s" --print-data-root); then
+                    data=${out##*$'\n'}
+                    fbag="$data/$s/$s.bag"
+                    cp "$data/fault.json" "results/injected_fault_$s.json"
+                    echo "df after faulting ($s):"; df -h /
+                  else
+                    echo "::error::$s: could not create the faulted copy for fault=$FAULT"
+                    data=""
+                    rc=1
+                  fi
+                fi
+                if [ -n "$data" ]; then
+                  DATA="$data" bash scripts/run_sequence.sh "$s" results || rc=1
+                fi
                 echo "df after run ($s):"; df -h /
               elif [ "$fetch_rc" -eq 75 ]; then
                 echo "::error::$s: data fetch failed, not a quality result (server unavailable or rate-limited after retries)"
@@ -130,7 +158,7 @@ jobs:
             fi
             # Always score: a sequence that did not run gets a failed result, not a gap.
             python -m vioreg.score --seqs "$s" --out results --image "$IMAGE" || rc=1
-            rm -f "$bag"
+            rm -f "$bag" "$fbag"
             echo "df after deleting the bag ($s):"; df -h /
             echo "::endgroup::"
           done
@@ -148,7 +176,7 @@ jobs:
         run: |
           read -ra seq_list <<< "$SEQS"
           python -m vioreg.report results --seqs "${seq_list[@]}" --host results/host_ci.json \
-            >> "$GITHUB_STEP_SUMMARY"
+            --injected-fault "$FAULT" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload results and junit (never the dataset)
         if: always()
