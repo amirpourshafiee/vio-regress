@@ -9,6 +9,11 @@ Each run k (numbered after the highest existing run<k>.tum) writes into <OUT_ROO
                       measured with time.monotonic() identically for every run and mode
   run<k>.config_hash  hash of the config the run actually used (image or CONFIG_DIR)
   run<k>.log          container stdout/stderr
+  run<k>.cmd          the exact docker command
+
+No output reuse (S3b): run numbers skip past every run<k>.* file, a run refuses to start
+if its run<k>.ov.txt already exists, and the trajectory must be modified after the run
+started. (ov_eval's Recorder also deletes an existing output file when it opens.)
 
 Fail closed: if the container exits non-zero, or produces no or unparsable output, the
 run still claims its slot with an EMPTY run<k>.tum, so score.py counts it as a failed run
@@ -42,7 +47,7 @@ _BAG_START = {"MH_01": 40.0, "MH_02": 35.0, "MH_03": 17.5, "MH_04": 15.0, "MH_05
               "V1_01": 0.0, "V1_02": 0.0, "V1_03": 0.0, "V2_01": 0.0, "V2_02": 0.0,
               "V2_03": 0.0}
 CONFIG_NAME = "euroc_mav"
-RUN_TUM = re.compile(r"^run(\d+)\.tum$")
+RUN_ANY = re.compile(r"^run(\d+)\.")  # any per-run artifact: .tum .ov.txt .wall_s .log ...
 
 
 def bag_start(seq: str) -> float:
@@ -55,7 +60,9 @@ def bag_start(seq: str) -> float:
 def next_run_index(seq_dir: Path) -> int:
     if not Path(seq_dir).is_dir():
         return 1
-    ks = [int(m.group(1)) for p in Path(seq_dir).iterdir() if (m := RUN_TUM.match(p.name))]
+    # Every run<k>.* artifact counts, not just .tum: a leftover run<k>.ov.txt whose .tum was
+    # deleted must never become the "output" of a new run k (S3b reuse guard).
+    ks = [int(m.group(1)) for p in Path(seq_dir).iterdir() if (m := RUN_ANY.match(p.name))]
     return max(ks, default=0) + 1
 
 
@@ -71,6 +78,12 @@ class RunConfig:
     mode: str = "serial"
     cpus: str | None = None
     config_dir: Path | None = None
+    bag_start_s: float | None = None  # None = upstream per-sequence default
+    bag_rate: float | None = None     # realtime only; None = 1x
+
+
+class RunnerError(RuntimeError):
+    pass
 
 
 @dataclass
@@ -84,6 +97,11 @@ class RunResult:
 def docker_cmd(c: RunConfig, k: int) -> list[str]:
     if c.mode not in ("serial", "realtime"):
         raise ValueError(f"mode must be serial or realtime, not {c.mode!r}")
+    start = bag_start(c.seq) if c.bag_start_s is None else float(c.bag_start_s)
+    if start < 0:
+        raise ValueError(f"bag_start must be >= 0, not {start}")
+    if c.bag_rate is not None and c.mode != "realtime":
+        raise ValueError("bag_rate exists only in realtime mode (serial reads the bag directly)")
     seq_out = Path(c.out_root).resolve() / c.seq
     cmd = ["docker", "run", "--rm", "--user", f"{c.uid}:{c.gid}",
            "-e", "HOME=/tmp", "-e", "ROS_HOME=/tmp/.ros"]
@@ -95,10 +113,10 @@ def docker_cmd(c: RunConfig, k: int) -> list[str]:
     launch = "serial.launch" if c.mode == "serial" else "subscribe.launch"
     cmd += [c.image, "roslaunch", "ov_msckf", launch,
             f"config:={CONFIG_NAME}", f"dataset:={c.seq}", f"bag:=/data/{c.seq}.bag",
-            f"bag_start:={bag_start(c.seq)}", "verbosity:=WARNING",
+            f"bag_start:={start}", "verbosity:=WARNING",
             "dosave:=true", f"path_est:=/out/run{k}.ov.txt"]
     if c.mode == "realtime":
-        cmd += ["dobag:=true", "bag_rate:=1"]
+        cmd += ["dobag:=true", f"bag_rate:={c.bag_rate if c.bag_rate is not None else 1}"]
     return cmd
 
 
@@ -120,10 +138,15 @@ def run_once(c: RunConfig, execute=_execute) -> RunResult:
     seq_dir.mkdir(parents=True, exist_ok=True)
     k = next_run_index(seq_dir)
     tum, ov = seq_dir / f"run{k}.tum", seq_dir / f"run{k}.ov.txt"
+    if ov.exists():  # cannot happen via next_run_index; refuse rather than risk reuse
+        raise RunnerError(f"{ov} already exists; refusing to run into it")
+    cmd = docker_cmd(c, k)
     tum.write_text("")  # claim the slot first: a crash below leaves a failed run, not a gap
     (seq_dir / f"run{k}.config_hash").write_text(c.config_hash + "\n")
+    (seq_dir / f"run{k}.cmd").write_text(" ".join(cmd) + "\n")
+    started = time.time() - 1.0  # 1 s slack for filesystem timestamp granularity
     t0 = time.monotonic()
-    rc = execute(docker_cmd(c, k), seq_dir / f"run{k}.log")
+    rc = execute(cmd, seq_dir / f"run{k}.log")
     wall = time.monotonic() - t0
     (seq_dir / f"run{k}.wall_s").write_text(f"{wall:.3f}\n")
     reason = ""
@@ -131,6 +154,8 @@ def run_once(c: RunConfig, execute=_execute) -> RunResult:
         reason = f"container exited {rc}"
     elif not ov.exists() or ov.stat().st_size == 0:
         reason = "no trajectory written"
+    elif ov.stat().st_mtime < started:
+        reason = "trajectory file is older than the run (not written by it)"
     else:
         try:
             if convert_ov_to_tum(ov, tum) < 2:
@@ -153,6 +178,10 @@ def main(argv=None) -> int:
                     default=Path(os.environ["CONFIG_DIR"]) if os.environ.get("CONFIG_DIR") else None)
     ap.add_argument("--image", default=os.environ.get("IMAGE", "vioreg-openvins:v2.7"))
     ap.add_argument("--data", type=Path, default=Path(os.environ.get("DATA", "data/euroc")))
+    ap.add_argument("--bag-start", type=float,
+                    default=float(os.environ["BAG_START"]) if os.environ.get("BAG_START") else None)
+    ap.add_argument("--bag-rate", type=float,
+                    default=float(os.environ["BAG_RATE"]) if os.environ.get("BAG_RATE") else None)
     a = ap.parse_args(argv)
 
     bag = a.data / a.seq / f"{a.seq}.bag"
@@ -168,9 +197,12 @@ def main(argv=None) -> int:
         return 1
     c = RunConfig(seq=a.seq, out_root=a.out_root, data_root=a.data, image=a.image,
                   config_hash=chash, uid=os.getuid(), gid=os.getgid(), mode=a.mode,
-                  cpus=a.cpus, config_dir=a.config_dir)
+                  cpus=a.cpus, config_dir=a.config_dir, bag_start_s=a.bag_start,
+                  bag_rate=a.bag_rate)
     print(f"run_sequence: {a.seq} x{a.runs} mode={a.mode} cpus={a.cpus or 'unlimited'} "
-          f"config={a.config_dir or 'image'} ({chash[:12]})", flush=True)
+          f"config={a.config_dir or 'image'} ({chash[:12]}) "
+          f"bag_start={a.bag_start if a.bag_start is not None else bag_start(a.seq)} "
+          f"bag_rate={a.bag_rate or '-'}", flush=True)
     fails = 0
     for _ in range(a.runs):
         r = run_once(c)

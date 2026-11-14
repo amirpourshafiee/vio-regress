@@ -28,11 +28,14 @@ def test_unknown_sequence_is_an_error():
         runner.bag_start("MH_99_bogus")
 
 
-def test_next_run_index(tmp_path):
+def test_next_run_index_skips_past_every_run_artifact(tmp_path):
+    """S3b: numbering looks at EVERY run<k>.* file, not just .tum, so a leftover
+    run<k>.ov.txt (its .tum deleted) can never be picked up as a new run's output."""
     assert runner.next_run_index(tmp_path / "missing") == 1
-    for name in ("run1.tum", "run2.tum", "run10.tum", "run11.ov.txt", "run12.wall_s", "x.tum"):
+    for name in ("run1.tum", "run2.tum", "run10.tum", "run11.ov.txt", "run12.wall_s", "x.tum",
+                 "runner.txt"):
         (tmp_path / name).write_text("")
-    assert runner.next_run_index(tmp_path) == 11
+    assert runner.next_run_index(tmp_path) == 13
 
 
 def cfg(tmp_path, **kw):
@@ -117,3 +120,56 @@ def test_non_monotonic_output_fails_the_run(tmp_path):
     lines = rows.splitlines(keepends=True)
     r = runner.run_once(cfg(tmp_path), execute=fake_exec(lines[1] + lines[0] + lines[2]))
     assert not r.ok
+
+
+# ---------------------------------------------------------------- S3b: no output reuse
+def test_stale_output_of_a_deleted_run_is_never_reused(tmp_path):
+    """run1.tum deleted, run1.ov.txt left behind, and the next container exits 0 without
+    writing anything: the run must FAIL, not silently score the stale file."""
+    d = tmp_path / "results" / "MH_01_easy"
+    d.mkdir(parents=True)
+    (d / "run1.ov.txt").write_text(OV_HEADER + ov_rows())
+    r = runner.run_once(cfg(tmp_path), execute=fake_exec(None))
+    assert r.k == 2 and not r.ok and "no trajectory" in r.reason
+    assert (d / "run2.tum").read_text() == ""
+
+
+def test_refuses_to_run_into_an_existing_output_file(tmp_path, monkeypatch):
+    d = tmp_path / "results" / "MH_01_easy"
+    d.mkdir(parents=True)
+    (d / "run1.ov.txt").write_text(OV_HEADER + ov_rows())
+    monkeypatch.setattr(runner, "next_run_index", lambda _d: 1)
+    with pytest.raises(runner.RunnerError, match="already exists"):
+        runner.run_once(cfg(tmp_path), execute=fake_exec(ov_rows()))
+
+
+def test_output_older_than_the_run_is_rejected(tmp_path):
+    """Defence in depth: whatever the container did, the trajectory it leaves must have
+    been written during this run."""
+    import os
+
+    def execute(cmd, log_path):
+        fake_exec(ov_rows())(cmd, log_path)
+        out = log_path.parent / f"run{runner.next_run_index(log_path.parent) - 1}.ov.txt"
+        os.utime(out, (1_000_000_000, 1_000_000_000))  # 2001
+        return 0
+
+    r = runner.run_once(cfg(tmp_path), execute=execute)
+    assert not r.ok and "older than the run" in r.reason
+
+
+def test_cmd_sidecar_records_exact_command(tmp_path):
+    r = runner.run_once(cfg(tmp_path, bag_start_s=42.0), execute=fake_exec(ov_rows()))
+    cmd = (tmp_path / "results" / "MH_01_easy" / f"run{r.k}.cmd").read_text()
+    assert "bag_start:=42.0" in cmd and "serial.launch" in cmd
+
+
+def test_bag_start_and_rate_overrides(tmp_path):
+    c = cfg(tmp_path, bag_start_s=38.0)
+    assert "bag_start:=38.0" in runner.docker_cmd(c, 1)
+    rt = runner.docker_cmd(cfg(tmp_path, mode="realtime", bag_rate=2.0), 1)
+    assert "bag_rate:=2.0" in rt and "bag_start:=40.0" in rt
+    with pytest.raises(ValueError):
+        runner.docker_cmd(cfg(tmp_path, bag_rate=2.0), 1)  # rate exists only for realtime
+    with pytest.raises(ValueError):
+        runner.docker_cmd(cfg(tmp_path, bag_start_s=-1.0), 1)
