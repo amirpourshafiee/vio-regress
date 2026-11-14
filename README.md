@@ -1,8 +1,19 @@
 # vioreg starter
 
-Tested starter modules from the build guide: metrics, gate, faults, windows, judge, kappa.
-Not included on purpose: runner scripts, score.py, report.py, make_thresholds.py (sessions S1 to S4).
-Dockerfile and workflows are UNTESTED skeletons.
+**Write-up:** [vioreg part 1: a regression gate for visual-inertial odometry](docs/WRITEUP.md)
+
+Status (part 1): the regression gate is built and running.
+- The OpenVINS image is built from `docker/Dockerfile.openvins` by `.github/workflows/publish-image.yml`,
+  pushed to GHCR and pinned by registry digest in `docker/IMAGE_REF` (see "Image identity" below).
+- `.github/workflows/nightly.yml` pulls that image and replays all 3 baseline sequences daily
+  and on manual dispatch. Run 43573219393 (2026-11-14) passed the gate on all 3 sequences
+  (docs/ci.md).
+- `.github/workflows/pr.yml` runs the unit tests and the gate on the committed golden results
+  in `tests/golden_results`. It does not run OpenVINS.
+- Runner, scoring, report and threshold scripts: `scripts/run_sequence.sh`, `scripts/fetch_euroc.sh`,
+  `python -m vioreg.score`, `python -m vioreg.report`, `scripts/make_thresholds.py`.
+- Not built: `src/vioreg/windows.py`, `judge.py` (VLM judge) and `kappa.py` are unit-tested
+  starter modules that have never been run on real data. There are no labels and no results.
 
     python3 -m venv .venv && . .venv/bin/activate && pip install -e ".[dev]"
     pytest -m "not sequence and not slow"
