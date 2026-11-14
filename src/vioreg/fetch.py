@@ -237,6 +237,19 @@ def _extract_from_inflated_zip(outer_rf, asl_zi, member, out: Path, seq: str) ->
         tmp.unlink(missing_ok=True)
 
 
+def is_complete(seq_dir: Path) -> bool:
+    """True only if manifest.json exists and every file it lists is present with the
+    recorded size. S3 deletes raw bags after scoring; a stale manifest must not make a
+    later fetch skip them."""
+    m = Path(seq_dir) / "manifest.json"
+    try:
+        files = json.loads(m.read_text())["files"]
+    except (OSError, ValueError, KeyError):
+        return False
+    return all((Path(seq_dir) / f["path"]).is_file()
+               and (Path(seq_dir) / f["path"]).stat().st_size == f["bytes"] for f in files)
+
+
 def plan_bytes(seq: str, transport=None, url=None) -> int:
     """Compressed bytes that fetch_sequence would transfer for seq (directory reads only)."""
     tr, arch = transport or HttpTransport(), archive_for(seq)
@@ -250,8 +263,9 @@ def fetch_sequence(seq: str, out_root: str | Path, transport=None, url=None) -> 
     tr, arch = transport or HttpTransport(), archive_for(seq)
     out = Path(out_root) / seq
     manifest = out / "manifest.json"
-    if manifest.exists():
+    if is_complete(out):
         return out
+    manifest.unlink(missing_ok=True)  # stale: a listed file was deleted or changed
     url = url or arch.url
     outer_rf = RangeFile(tr, url)
     outer = zipfile.ZipFile(outer_rf)
@@ -282,7 +296,7 @@ def main(argv=None) -> int:
     ap.add_argument("--max-gb", type=float, default=DEFAULT_MAX_BYTES / 1e9)
     a = ap.parse_args(argv)
     try:
-        todo = [s for s in a.sequences if not (Path(a.out_root) / s / "manifest.json").exists()]
+        todo = [s for s in a.sequences if not is_complete(Path(a.out_root) / s)]
         total = sum(plan_bytes(s) for s in todo)
         print(f"plan: {len(todo)} sequence(s), {total / 1e9:.2f} GB to transfer", flush=True)
         check_budget(total, a.max_gb * 1e9, a.yes)
