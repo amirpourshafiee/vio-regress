@@ -102,6 +102,10 @@ image. It is not a proof that every host will match. That is why an exact-pose m
 under the same key is a warning, not a failure: if a future runner produces slightly
 different floats, the ratio margins decide.
 
+A third CPU type, AMD EPYC 9V74 with AVX-512, appeared in the red-build demo run
+(section 7). No determinism claim is made from that run, because its injected fault
+changes the poses.
+
 On a fixed host, 10 identical runs are 1 sample. The nightly uses 2 runs per sequence,
 enough to notice if determinism ever breaks.
 
@@ -233,10 +237,11 @@ keep the gate as it is and document these gaps, rather than tune margins to make
 - Image publish run, which built and pushed the pinned image:
   <https://github.com/amirpourshafiee/vio-regress/actions/runs/43561755606>
 
-No red-build demo run (the nightly with a `fault` input) is recorded in the repository yet.
-`docs/ci.md` describes how to start one and what it should print.
+- Red-build demo, the nightly started with `fault=time-offset=100`. All 3 sequences gave QUALITY FAIL, as intended, and the job summary banner says the red is expected: <https://github.com/amirpourshafiee/vio-regress/actions/runs/43638509946>
 
-<!-- source: docs/ci.md (run IDs); URLs are github.com/<repo>/actions/runs/<run ID> -->
+The estimator diverged on all three sequences (RPE ratios above 10,000 against the 1.28 limit), so this shows the gate catching a catastrophic fault, not a subtle one. On MH_03_medium the two runs gave two distinct trajectories, so a diverged run is not reproducible even though healthy runs are. `docs/ci.md` describes how to start a demo run and what it should print.
+
+<!-- source: docs/ci.md (run IDs); job summary of run 43638509946 (demo banner, ratios, CPU, MH_03 runs); URLs are github.com/<repo>/actions/runs/<run ID> -->
 
 ## 8. Reproduce it
 
