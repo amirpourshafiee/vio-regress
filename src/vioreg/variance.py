@@ -4,8 +4,9 @@
         --out-dir docs/variance
 
 Per run: ATE and RPE are recomputed with the same score._score_run the scorer uses (so the
-numbers are identical to score.py's), and the trajectory file is fingerprinted (sha1) so
-"bit-identical runs" is measured, not inferred. A failed run (empty / unreadable / ok=false)
+numbers are identical to score.py's). Determinism is checked POSE BY POSE (pose_equivalent):
+since S3b, file sha1s are only informational, because the recorder's shutdown race can drop
+the final pose and make identical estimator output differ as bytes. A failed run (empty / unreadable / ok=false)
 is kept with null metrics and its reason.
 
 Outputs:
@@ -25,7 +26,7 @@ from pathlib import Path
 import numpy as np
 
 from . import score
-from .euroc_io import load_euroc_gt
+from .euroc_io import load_euroc_gt, load_tum
 
 PROVENANCE = ("vio_commit", "image_digest", "harness_commit", "config_hash")
 
@@ -46,6 +47,38 @@ def spread(values) -> dict:
             "min": float(ok.min()), "max": float(ok.max()), "range": float(ok.max() - ok.min())}
 
 
+MAX_TRAILING = 2  # poses one run may have past the other's end (recorder shutdown race)
+
+
+def pose_equivalent(a: Path, b: Path, max_trailing: int = MAX_TRAILING) -> bool:
+    """True if two trajectories are the same estimator output.
+
+    Compared pose by pose on the printed values (t, p, q as written to the TUM file):
+    the shorter run must be an exact prefix of the longer, and the longer may have at
+    most `max_trailing` extra poses at its end. S3b showed the recorder can drop the final
+    pose at shutdown, so file checksums over-count distinct trajectories; anything else
+    (a moved pose, a different start, a run cut short) is a different trajectory.
+    """
+    ta, tb = load_tum(a), load_tum(b)
+    if len(ta) > len(tb):
+        ta, tb = tb, ta
+    n = len(ta)
+    if n == 0 or len(tb) - n > max_trailing:
+        return False
+    return (np.array_equal(ta.t, tb.t[:n]) and np.array_equal(ta.p, tb.p[:n])
+            and np.array_equal(ta.q, tb.q[:n]))
+
+
+def distinct_trajectories(paths, max_trailing: int = MAX_TRAILING) -> int:
+    """Number of pose-level-distinct trajectories (each compared with one representative
+    per group)."""
+    reps: list[Path] = []
+    for p in paths:
+        if not any(pose_equivalent(p, r, max_trailing) for r in reps):
+            reps.append(p)
+    return len(reps)
+
+
 def _num(seq_dir: Path, name: str):
     try:
         return float((seq_dir / name).read_text().strip())
@@ -59,7 +92,7 @@ def collect_runs(variant_root: Path, seq: str, data_root: Path, align: str,
     gt = load_euroc_gt(Path(data_root) / seq / score.GT_REL)
     runs = []
     for k, path in score.find_runs(seq_dir):
-        r = {"k": k, "ok": False, "ate_rmse": None, "rpe_rmse": None, "coverage": None,
+        r = {"k": k, "path": str(path), "ok": False, "ate_rmse": None, "rpe_rmse": None, "coverage": None,
              "n": None, "traj_sha1": None, "wall_s": _num(seq_dir, f"run{k}.wall_s"),
              "reason": ""}
         try:
@@ -77,7 +110,9 @@ def summarise(runs: list[dict]) -> dict:
     shas = {r["traj_sha1"] for r in runs if r["ok"]}
     return {"runs": len(runs), "failed": sum(not r["ok"] for r in runs),
             "failed_reasons": [f"run{r['k']}: {r['reason']}" for r in runs if not r["ok"]],
-            "distinct_trajectories": len(shas),
+            # pose-level (the determinism check); file-level kept for information only
+            "distinct_trajectories": distinct_trajectories([Path(r["path"]) for r in runs if r["ok"]]),
+            "distinct_files": len(shas),
             "ate_rmse": spread([r["ate_rmse"] for r in runs]),
             "rpe_rmse": spread([r["rpe_rmse"] for r in runs]),
             "coverage_min": min((r["coverage"] for r in runs if r["ok"]), default=None),
