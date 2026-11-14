@@ -69,7 +69,7 @@ jobs:
           # fault: empty, or exactly one spec from the allow-list (vioreg.fault_cli.SPEC_PATTERN);
           # value ranges are checked again by fault_cli before anything is written.
           fre='^(imu-noise=[0-9]{1,4}(\.[0-9]{1,4})?,[0-9]{1,4}(\.[0-9]{1,4})?|gamma=[0-9]{1,4}(\.[0-9]{1,4})?|blur=[0-9]{1,4}|drop-frames=[0-9]{1,4}|time-offset=-?[0-9]{1,4}(\.[0-9]{1,4})?)$'
-          [[ -z "$FAULT" || "$FAULT" =~ $fre ]] || { echo "::error::fault is not on the allow-list: $FAULT"; exit 1; }
+          [[ -z "$FAULT" || "$FAULT" =~ $fre ]] || { echo "::error::fault is not on the allow-list: ${FAULT@Q}"; exit 1; }
 
       - name: Save host fingerprint with the results
         run: |
