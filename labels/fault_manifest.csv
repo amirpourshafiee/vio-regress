@@ -14,3 +14,33 @@ MH_01_easy__time-offset_offset_ms30,MH_01_easy,time-offset,"{""offset_ms"": 30.0
 MH_01_easy__time-offset_offset_ms40,MH_01_easy,time-offset,"{""offset_ms"": 40.0}",0,2026-11-14T09:15:38Z
 MH_01_easy__imu-noise_sigma_w0.05-sigma_a1-seed0,MH_01_easy,imu-noise,"{""sigma_a"": 1.0, ""sigma_w"": 0.05}",0,2026-11-14T09:18:36Z
 MH_01_easy__blur_length25,MH_01_easy,blur,"{""length"": 25}",0,2026-11-14T09:20:54Z
+V1_01_easy__identity_none,V1_01_easy,identity,{},0,2026-11-14T13:12:12Z
+V1_01_easy__time-offset_offset_ms1,V1_01_easy,time-offset,"{""offset_ms"": 1.0}",0,2026-11-14T13:15:19Z
+V1_01_easy__time-offset_offset_ms5,V1_01_easy,time-offset,"{""offset_ms"": 5.0}",0,2026-11-14T13:18:17Z
+V1_01_easy__time-offset_offset_ms20,V1_01_easy,time-offset,"{""offset_ms"": 20.0}",0,2026-11-14T13:21:13Z
+V1_01_easy__time-offset_offset_ms30,V1_01_easy,time-offset,"{""offset_ms"": 30.0}",0,2026-11-14T13:23:53Z
+V1_01_easy__time-offset_offset_ms40,V1_01_easy,time-offset,"{""offset_ms"": 40.0}",0,2026-11-14T13:26:37Z
+V1_01_easy__time-offset_offset_ms50,V1_01_easy,time-offset,"{""offset_ms"": 50.0}",0,2026-11-14T13:29:22Z
+V1_01_easy__time-offset_offset_ms100,V1_01_easy,time-offset,"{""offset_ms"": 100.0}",0,2026-11-14T13:32:11Z
+V1_01_easy__time-offset_offset_ms200,V1_01_easy,time-offset,"{""offset_ms"": 200.0}",0,2026-11-14T13:34:16Z
+V1_01_easy__imu-noise_sigma_w0.01-sigma_a0.2-seed0,V1_01_easy,imu-noise,"{""sigma_a"": 0.2, ""sigma_w"": 0.01}",0,2026-11-14T13:36:18Z
+V1_01_easy__imu-noise_sigma_w0.05-sigma_a1-seed0,V1_01_easy,imu-noise,"{""sigma_a"": 1.0, ""sigma_w"": 0.05}",0,2026-11-14T13:39:07Z
+V1_01_easy__gamma_gamma2.2,V1_01_easy,gamma,"{""gamma"": 2.2}",0,2026-11-14T13:41:02Z
+V1_01_easy__blur_length9,V1_01_easy,blur,"{""length"": 9}",0,2026-11-14T13:44:23Z
+V1_01_easy__blur_length25,V1_01_easy,blur,"{""length"": 25}",0,2026-11-14T13:47:37Z
+V1_01_easy__drop-frames_keep_every2,V1_01_easy,drop-frames,"{""keep_every"": 2}",0,2026-11-14T13:49:57Z
+MH_03_medium__identity_none,MH_03_medium,identity,{},0,2026-11-14T13:54:18Z
+MH_03_medium__time-offset_offset_ms1,MH_03_medium,time-offset,"{""offset_ms"": 1.0}",0,2026-11-14T13:56:16Z
+MH_03_medium__time-offset_offset_ms5,MH_03_medium,time-offset,"{""offset_ms"": 5.0}",0,2026-11-14T13:58:18Z
+MH_03_medium__time-offset_offset_ms20,MH_03_medium,time-offset,"{""offset_ms"": 20.0}",0,2026-11-14T14:00:20Z
+MH_03_medium__time-offset_offset_ms30,MH_03_medium,time-offset,"{""offset_ms"": 30.0}",0,2026-11-14T14:02:17Z
+MH_03_medium__time-offset_offset_ms40,MH_03_medium,time-offset,"{""offset_ms"": 40.0}",0,2026-11-14T14:04:18Z
+MH_03_medium__time-offset_offset_ms50,MH_03_medium,time-offset,"{""offset_ms"": 50.0}",0,2026-11-14T14:06:29Z
+MH_03_medium__time-offset_offset_ms100,MH_03_medium,time-offset,"{""offset_ms"": 100.0}",0,2026-11-14T14:08:37Z
+MH_03_medium__time-offset_offset_ms200,MH_03_medium,time-offset,"{""offset_ms"": 200.0}",0,2026-11-14T14:10:14Z
+MH_03_medium__imu-noise_sigma_w0.01-sigma_a0.2-seed0,MH_03_medium,imu-noise,"{""sigma_a"": 0.2, ""sigma_w"": 0.01}",0,2026-11-14T14:11:49Z
+MH_03_medium__imu-noise_sigma_w0.05-sigma_a1-seed0,MH_03_medium,imu-noise,"{""sigma_a"": 1.0, ""sigma_w"": 0.05}",0,2026-11-14T14:13:52Z
+MH_03_medium__gamma_gamma2.2,MH_03_medium,gamma,"{""gamma"": 2.2}",0,2026-11-14T14:15:22Z
+MH_03_medium__blur_length9,MH_03_medium,blur,"{""length"": 9}",0,2026-11-14T14:18:07Z
+MH_03_medium__blur_length25,MH_03_medium,blur,"{""length"": 25}",0,2026-11-14T14:20:46Z
+MH_03_medium__drop-frames_keep_every2,MH_03_medium,drop-frames,"{""keep_every"": 2}",0,2026-11-14T14:22:30Z

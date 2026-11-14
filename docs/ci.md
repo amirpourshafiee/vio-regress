@@ -202,7 +202,7 @@ usual. The original bag is mounted read-only, and both bags are deleted after ea
 |---|---|---|---|
 | fastest red, one sequence | `MH_01_easy` | `time-offset=50` | QUALITY FAIL: `RPE ratio ≈22000 > 1.280` |
 | red by a counting check | `MH_01_easy` | `drop-frames=2` | QUALITY FAIL: `associated pose count 1371 < baseline 2746 - 4` |
-| full three-sequence red | (default) | `time-offset=50` | per-sequence RPE fails and `ATE geometric mean ratio … > 1.500` (expected; only MH_01_easy measured so far) |
+| full three-sequence red | (default) | `time-offset=100` | all three sequences fail on RPE (ratio ≈ 10 000–22 000) and `ATE geometric mean ratio … > 1.500`. With `time-offset=50`, only MH_01_easy diverges: V1_01_easy and MH_03_medium absorb 50 ms (docs/faults.md) |
 | what the gate misses | `MH_01_easy` | `gamma=2.2` or `blur=9` | PASS: these are not caught (docs/faults.md) |
 
 **How to read it:** the gate step fails, and its first line names the sequence, the verdict,
