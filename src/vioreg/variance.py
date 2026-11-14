@@ -141,6 +141,8 @@ def build_baseline(variant_root: Path, seqs, data_root: Path, thresholds: dict) 
             "per_run_ate_rmse": [r["ate_rmse"] for r in runs],
             "per_run_rpe_rmse": [r["rpe_rmse"] for r in runs],
             "per_run_ok": [r["ok"] for r in runs],
+            "per_run_coverage": [r["coverage"] for r in runs],
+            "per_run_n": [r["n"] for r in runs],  # associated poses (ate.n)
         }
     return out
 

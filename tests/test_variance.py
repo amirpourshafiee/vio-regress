@@ -145,3 +145,12 @@ def test_summarise_reports_pose_level_and_file_level_counts(variant_root):
     s = variance.summarise(variance.collect_runs(root, SEQ, data, "posyaw", 0.0))
     assert s["distinct_files"] == 3            # run1/2, run3, run5 differ as bytes
     assert s["distinct_trajectories"] == 2     # run5 == run1 pose for pose
+
+
+def test_baseline_json_carries_coverage_and_pose_count(variant_root):
+    """S4: make_thresholds needs per-run coverage and associated pose count (ate.n)."""
+    root, data = variant_root
+    thr = {"defaults": {"align": "posyaw"}, "sequences": {SEQ: {"skip_s": 0}}}
+    s = variance.build_baseline(root, [SEQ], data, thr)["sequences"][SEQ]
+    assert len(s["per_run_coverage"]) == 4 and s["per_run_coverage"][3] is None
+    assert s["per_run_n"][0] == s["per_run_n"][1] > 0 and s["per_run_n"][3] is None
