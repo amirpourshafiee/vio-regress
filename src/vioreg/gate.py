@@ -193,6 +193,31 @@ def emit_warning(msg: str) -> None:
         print(f"WARNING: {msg}", file=sys.stderr)
 
 
+# ---------------------------------------------------------------- verdicts + scope (S5a)
+VERDICTS = ("pass", "needs-rebaseline", "quality-fail", "missing", "invalid")
+
+
+def classify(fails: list[str]) -> str:
+    """One verdict per sequence, so a key mismatch is never reported as a quality failure.
+    Precedence: missing > invalid > needs-rebaseline > quality-fail > pass."""
+    if not fails:
+        return "pass"
+    if any(f.startswith(("missing result", "unparsable result", "result is empty")) for f in fails):
+        return "missing"
+    if any(f.startswith("invalid result") or "not in thresholds" in f for f in fails):
+        return "invalid"
+    if any(f.startswith("needs re-baseline") for f in fails):
+        return "needs-rebaseline"
+    return "quality-fail"
+
+
+def parse_scope(text: str | None) -> list[str] | None:
+    """HARNESS_SEQUENCES='MH_01_easy V1_01_easy' (spaces or commas). None/blank = all."""
+    if not text or not text.strip():
+        return None
+    return [s for s in text.replace(",", " ").split() if s]
+
+
 # ---------------------------------------------------------------- whole results directory
 def load_result(path: Path):
     try:
@@ -202,16 +227,26 @@ def load_result(path: Path):
 
 
 def evaluate_results_dir(results_dir: Path, cfg: dict, require: bool,
-                         root: Path | None = None) -> dict:
-    """Evaluate every thresholds sequence. Returns {"sequences": {seq: [fails]},
-    "aggregate": [fails], "warnings": [...], "notes": [...], "skipped": [...],
-    "passed": bool}."""
+                         root: Path | None = None, scope: list[str] | None = None) -> dict:
+    """Evaluate the thresholds sequences (or only `scope`, e.g. a one-sequence nightly).
+
+    Returns {"sequences": {seq: [fails]}, "verdicts": {seq: verdict}, "aggregate": [fails],
+    "aggregate_skipped": reason or "", "warnings": [...], "notes": [...], "skipped": [...],
+    "passed": bool}. A scoped run judges only its sequences (missing ones still fail when
+    `require`); the ATE geometric mean is defined over ALL baseline sequences (rule 3), so a
+    partial scope SKIPS it with an explicit reason instead of computing a single-sequence ATE
+    gate."""
     from .score import ROOT
     root = Path(root) if root is not None else ROOT
-    rep = {"sequences": {}, "aggregate": [], "warnings": [], "notes": [], "skipped": [],
-           "passed": False}
+    rep = {"sequences": {}, "verdicts": {}, "aggregate": [], "aggregate_skipped": "",
+           "warnings": [], "notes": [], "skipped": [], "passed": False}
     results = {}
-    for seq in sorted(cfg.get("sequences", {})):
+    all_seqs = sorted(cfg.get("sequences", {}))
+    seqs = all_seqs if scope is None else list(dict.fromkeys(scope))
+    for seq in seqs:
+        if seq not in cfg.get("sequences", {}):
+            rep["sequences"][seq] = [f"{seq} not in thresholds"]
+            continue
         f = Path(results_dir) / f"{seq}.json"
         if not f.exists():
             if require:
@@ -231,8 +266,13 @@ def evaluate_results_dir(results_dir: Path, cfg: dict, require: bool,
             w, n = pose_warnings(results_dir, seq, r, cfg, root)
             rep["warnings"] += w
             rep["notes"] += n
-    if not (rep["skipped"] and not require):
+    if scope is not None and set(seqs) != set(all_seqs):
+        rep["aggregate_skipped"] = (
+            f"ATE geometric mean needs all {len(all_seqs)} baseline sequences; this run covers "
+            f"{len(set(seqs) & set(all_seqs))} of {len(all_seqs)} ({' '.join(seqs)})")
+    elif not (rep["skipped"] and not require):
         rep["aggregate"] = evaluate_aggregate(results, cfg)
+    rep["verdicts"] = {s: classify(f) for s, f in rep["sequences"].items()}
     rep["passed"] = (not any(rep["sequences"].values()) and not rep["aggregate"]
                      and (require or not rep["skipped"]))
     return rep
