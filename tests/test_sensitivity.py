@@ -78,3 +78,56 @@ def test_missing_score_json_fails_closed(root):
     with pytest.raises(sensitivity.SensitivityError, match="score"):
         sensitivity.analyse(r, [SEQ], data, {"defaults": {}, "sequences": {SEQ: {"skip_s": 0}}},
                             s3_baseline={SEQ: 0.020})
+
+
+# ---------------------------------------------------------------- per-knob + cross-sequence
+def two_seq_analysis():
+    """Hand-made analyse() output for two sequences (ratios easy to check by hand)."""
+    def var(group, ate, rpe, runs=3):
+        return {"group": group, "ate_median_m": ate, "rpe_median_m": rpe, "runs": runs,
+                "failed": 0, "per_run_ate_m": [ate] * runs}
+    return {"sequences": {
+        "MH_01_easy": {"s3_baseline_ate_m": 0.100, "s3_baseline_rpe_m": 0.020, "variants": {
+            "base": var("baseline", 0.100, 0.020), "num_pts_180": var("config", 0.150, 0.021),
+            "bag_start_42": var("replay_offset", 0.080, 0.019),
+            "bag_start_38": var("replay_offset", 0.120, 0.020),
+            "rt_rate_1.0": var("realtime_rate", 0.060, 0.020)}},
+        "V1_01_easy": {"s3_baseline_ate_m": 0.050, "s3_baseline_rpe_m": 0.040, "variants": {
+            "base": var("baseline", 0.050, 0.040), "num_pts_180": var("config", 0.040, 0.044),
+            "bag_start_2": var("replay_offset", 0.050, 0.040),
+            "bag_start_1": var("replay_offset", 0.050, 0.040),
+            "rt_rate_1.0": var("realtime_rate", 0.045, 0.040)}}}}
+
+
+def test_knob_rows_give_percent_of_baseline_for_ate_and_rpe():
+    rows = {r["variant"]: r for r in sensitivity.knob_rows(two_seq_analysis())}
+    r = rows["num_pts_180"]
+    assert r["knob"] == "num_pts" and r["value"] == "180"
+    assert r["ate_pct"]["MH_01_easy"] == pytest.approx(150.0)
+    assert r["ate_pct"]["V1_01_easy"] == pytest.approx(80.0)
+    assert r["rpe_pct"]["MH_01_easy"] == pytest.approx(105.0)
+    assert r["rpe_pct"]["V1_01_easy"] == pytest.approx(110.0)
+    assert rows["bag_start_38"]["ate_pct"]["V1_01_easy"] is None  # not run on V1
+
+
+def test_cross_sequence_geomean_pairs_same_meaning_variants_only():
+    x = sensitivity.cross_sequence(two_seq_analysis(), ["MH_01_easy", "V1_01_easy"])
+    by = {p["name"]: p for p in x["pairs"]}
+    # num_pts_180: sqrt(1.5 * 0.8)
+    assert by["num_pts_180"]["ate_geomean"] == pytest.approx((1.5 * 0.8) ** 0.5)
+    assert by["num_pts_180"]["rpe_geomean"] == pytest.approx((1.05 * 1.10) ** 0.5)
+    # start +2 s is MH_01 bag_start_42 with V1_01 bag_start_2, labelled as such
+    assert by["bag_start_+2s"]["members"] == {"MH_01_easy": "bag_start_42", "V1_01_easy": "bag_start_2"}
+    assert by["bag_start_+2s"]["ate_geomean"] == pytest.approx((0.8 * 1.0) ** 0.5)
+    assert "bag_start_38" not in by and "bag_start_1" not in by
+    leg = x["legitimate"]
+    assert set(leg["included"]) == {"base", "num_pts_180", "bag_start_+2s"}
+    assert leg["ate_min"] == pytest.approx((0.8) ** 0.5)
+    assert leg["runs"] == 3 * 2 * 3
+
+
+def test_cross_sequence_max_and_realtime_separate():
+    x = sensitivity.cross_sequence(two_seq_analysis(), ["MH_01_easy", "V1_01_easy"])
+    assert x["legitimate"]["ate_max"] == pytest.approx(max(1.0, (1.5 * 0.8) ** 0.5))
+    assert "rt_rate_1.0" not in x["legitimate"]["included"]
+    assert x["realtime"]["included"] == ["rt_rate_1.0"]

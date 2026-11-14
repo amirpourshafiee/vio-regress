@@ -55,13 +55,13 @@ results folder started empty. Fix (commit `c6daa3f`), defence in depth:
 
 **From the data:** the code does not guarantee repeatability; timing headroom does.
 
-| Realtime condition (MH_01_easy) | Runs | Distinct files | ATE RMSE per run (mm) | Meaning |
-|---|---|---|---|---|
-| S3, rate 1.0, idle | 10 | 1 | 60.086 × 10 | repeatable |
-| S3b, rate 1.0, idle | 5 | 2 | 60.086 × 5 | estimator identical; files differ only in the last pose (see below) |
-| rate 1.5, idle | 3 | 1 | 60.086 × 3 | repeatable |
-| **rate 2.0, idle** | 3 | 3 | **58.595, 69.900, 60.149** | estimator diverges |
-| **rate 1.0, all 4 CPUs busy** | 3 | 3 | **60.086, 60.086, 75.935** | 1 of 3 diverges |
+| Realtime condition (MH_01_easy) | Runs | Distinct trajectories (pose-level) | Distinct files | ATE RMSE per run (mm) | Meaning |
+|---|---|---|---|---|---|
+| S3, rate 1.0, idle | 10 | 1 | 1 | 60.086 × 10 | repeatable |
+| S3b, rate 1.0, idle | 5 | **1** | 2 | 60.086 × 5 | estimator identical; files differ only in the last pose (see below) |
+| rate 1.5, idle | 3 | 1 | 1 | 60.086 × 3 | repeatable |
+| **rate 2.0, idle** | 3 | 3 | 3 | **58.595, 69.900, 60.149** | estimator diverges |
+| **rate 1.0, all 4 CPUs busy** | 3 | **2** | 3 | **60.086, 60.086, 75.935** | 1 of 3 diverges |
 
 V1_01_easy behaves the same way: rate 1.0 and 1.5 give 57.031 mm × 6, while rate 2.0 gives
 68.303, 57.031 and 59.185 mm.
@@ -69,9 +69,13 @@ V1_01_easy behaves the same way: rate 1.0 and 1.5 give 57.031 mm × 6, while rat
 The 2 files at idle rate 1.0 differ in exactly one line: the final pose at t = …763.8135 s,
 70 ms after ground truth ends. When `rosbag play` (a required node) finishes, roslaunch
 kills every node, and whether the recorder has written that last pose is a race. It does
-not affect ATE. **Consequence: a file checksum is a fragile determinism check.** Compare
-poses over the common time span instead. Every serial run so far had an identical length,
-but the same race exists in principle.
+not affect ATE. **Consequence: a file checksum is a fragile determinism check**, so the
+harness now compares poses (`vioreg.variance.pose_equivalent`). Two runs are the same
+trajectory if every pose they share by timestamp is identical, as printed, and the longer
+run has at most 2 extra trailing poses. Anything else counts as a different trajectory: a
+moved pose, a different start, or a run cut short by more than 2 poses. File-level counts
+are kept as "distinct files" for information. Every serial run so far had an identical
+length, but the same race exists in principle.
 
 **Answer:** 10 realtime runs gave one file because, on an idle 4-core machine at 1×, the
 detached initializer and update threads always finished within the same data intervals.
@@ -96,7 +100,7 @@ and checked by the scorer.
 
 ### MH_01_easy (S3 baseline 90.919 mm)
 
-| Variant | config_hash | Runs OK | Distinct | ATE RMSE (mm) | vs baseline |
+| Variant | config_hash | Runs OK | Distinct (pose-level) | ATE RMSE (mm) | vs baseline |
 |---|---|---|---|---|---|
 | base | `5adca0e7` | 3/3 | 1 | 90.919 | 0.0% |
 | bag_start 38 | `5adca0e7` | 3/3 | 1 | 108.216 | +19.0% |
@@ -136,6 +140,94 @@ and checked by the scorer.
 Realtime is excluded above because the harness pins serial. Including it would widen
 MH_01 down to −35.6% and V1_01 up to +7.7%.
 
+### Per knob: ATE and RPE as percent of the S3 baseline
+
+Median over each variant's runs (identical runs for every serial variant). S3 baselines:
+ATE MH_01 90.919 mm and V1_01 63.408 mm; RPE (delta 1.0 s) MH_01 26.387 mm and
+V1_01 44.402 mm. Rows in *italics* are realtime replay, which the harness does not use.
+"-" means the value was not run on that sequence (start offsets differ per sequence).
+
+| Knob | Value | MH_01_easy ATE | V1_01_easy ATE | MH_01_easy RPE | V1_01_easy RPE |
+|---|---|---|---|---|---|
+| baseline | - | 100.0% | 100.0% | 100.0% | 100.0% |
+| bag_start | 1 | - | 100.0% | - | 100.0% |
+| bag_start | 2 | - | 86.5% | - | 99.5% |
+| bag_start | 38 | 119.0% | - | 104.5% | - |
+| bag_start | 42 | 84.8% | - | 103.6% | - |
+| fast_threshold | 18 | 173.4% | 90.2% | 105.6% | 99.8% |
+| fast_threshold | 22 | 79.2% | 101.0% | 101.0% | 99.4% |
+| num_pts | 180 | 78.4% | 94.8% | 99.7% | 100.7% |
+| num_pts | 220 | 82.4% | 90.3% | 102.6% | 99.7% |
+| gravity_mag | 9.80 | 81.5% | 98.6% | 102.6% | 100.7% |
+| gravity_mag | 9.80665 | 115.0% | 89.7% | 106.2% | 100.0% |
+| *rt_rate* | 1.0 | 66.1% | 89.9% | 101.5% | 99.0% |
+| *rt_rate* | 1.5 | 66.1% | 89.9% | 101.5% | 99.0% |
+| *rt_rate* | 2.0 | 66.2% | 93.3% | 102.8% | 99.0% |
+| *rt_load_rate* | 1.0 | 66.1% | - | 101.5% | - |
+
+**Is RPE less sensitive than ATE? Yes, by about an order of magnitude.** Across the
+legitimate serial variants:
+- MH_01_easy: RPE stays within 99.7–106.2% of baseline while ATE spans 78.4–173.4%.
+- V1_01_easy: RPE stays within 99.4–100.7% while ATE spans 86.5–101.0%.
+
+Even `fast_threshold: 18`, which moves MH_01's ATE by +73%, moves its RPE by +5.6%. RPE
+measures local drift over 1 s windows, so it does not accumulate the different initial
+bias and gravity estimate that drives the ATE swings. It is a steadier signal, but it also
+sees less: it is blind to a wrong global alignment or a slow drift that 1 s windows cannot
+show.
+
+### Aggregating across both sequences
+
+For each variant that exists on both sequences, the geometric mean of its two ratios to
+baseline. The start offsets differ per sequence (MH_01 38/42 around 40; V1_01 1/2 above 0),
+so only **start +2 s** has the same meaning on both: MH_01 `bag_start_42` is paired with
+V1_01 `bag_start_2`, and is labelled as such. MH_01 38 and V1_01 1 are excluded.
+
+| Variant (both sequences) | Group | ATE ratios | ATE geomean | RPE ratios | RPE geomean |
+|---|---|---|---|---|---|
+| base | baseline | 1.000 / 1.000 | 1.000 | 1.000 / 1.000 | 1.000 |
+| bag_start_+2s (MH_01: bag_start_42, V1_01: bag_start_2) | replay_offset | 0.848 / 0.865 | 0.857 | 1.036 / 0.995 | 1.015 |
+| fast_threshold_18 | config | 1.734 / 0.902 | 1.250 | 1.056 / 0.998 | 1.027 |
+| fast_threshold_22 | config | 0.792 / 1.010 | 0.894 | 1.010 / 0.994 | 1.002 |
+| num_pts_180 | config | 0.784 / 0.948 | 0.862 | 0.997 / 1.007 | 1.002 |
+| num_pts_220 | config | 0.824 / 0.903 | 0.863 | 1.026 / 0.997 | 1.011 |
+| gravity_mag_9.80 | innocent | 0.815 / 0.986 | 0.896 | 1.026 / 1.007 | 1.017 |
+| gravity_mag_9.80665 | innocent | 1.150 / 0.897 | 1.015 | 1.062 / 1.000 | 1.031 |
+| rt_rate_1.0 | realtime_rate | 0.661 / 0.899 | 0.771 | 1.015 / 0.990 | 1.002 |
+| rt_rate_1.5 | realtime_rate | 0.661 / 0.899 | 0.771 | 1.015 / 0.990 | 1.002 |
+| rt_rate_2.0 | realtime_rate | 0.662 / 0.933 | 0.786 | 1.028 / 0.990 | 1.009 |
+
+| Range (legitimate serial variants) | ATE ratio min–max | ATE spread | RPE ratio min–max |
+|---|---|---|---|
+| MH_01_easy alone | 0.784 – 1.734 | 0.950 | 0.998 – 1.062 |
+| V1_01_easy alone | 0.865 – 1.010 | 0.145 | 0.994 – 1.008 |
+| **Geometric mean of both** | **0.857 – 1.250** | **0.394** | **1.000 – 1.031** |
+
+**Does aggregating shrink the legitimate range? Partly.** Against MH_01 alone, yes: the
+ATE spread drops from 0.950 to 0.394, and the worst case from +73.4% to +25.0%. With two
+sequences, a geometric mean halves each sequence's deviation in log space. But it is
+still wider than V1_01 alone (0.145), because MH_01's swings dominate. The worst
+aggregated case is still `fast_threshold: 18` (+25.0%), whose large MH_01 swing is only
+partly offset by V1_01 (0.902). Aggregation helps only if the sequences' swings are not
+correlated. Here they partly cancel (gravity 9.80665: +15% and −10%), but two sequences
+are too few to rely on that.
+
+### What these ranges rest on (not a bound)
+
+| Range | Variants (incl. baseline) | Runs | Knobs × values |
+|---|---|---|---|
+| MH_01_easy single-sequence, ATE and RPE | 9 | 27 (9 × 3) | 4 knobs × 2 values, 1 sequence |
+| V1_01_easy single-sequence, ATE and RPE | 9 | 27 (9 × 3) | 4 knobs × 2 values, 1 sequence |
+| Geometric mean across both | 8 paired | 48 (8 × 3 × 2) | 3 knobs × 2 values + start +2 s |
+| Realtime (reported separately) | MH_01 4, V1_01 3 | 14 + 9 | rate × 3 values, plus 1 load test |
+
+Serial replay is deterministic, so each variant's 3 runs are 1 independent sample, not 3.
+**These are the observed extremes of a small, one-at-a-time sample, not a bound on what a
+legitimate change can do.** Only 5 knobs were tried, at 2 values each and one at a time,
+so interactions are untested, on 2 sequences. Since ATE is a deterministic but chaotic
+function of these inputs, another innocent change could easily land outside the observed
+range. The true legitimate envelope is at least this wide and probably wider.
+
 **Why so large, when runs are bit-identical?** On both sequences every variant
 initializes on the same camera frame (MH_01: first pose at …624.662 s ± 1.3 ms, 2767 poses
 each): the initializer waits for the pick-up motion whatever the start offset. What
@@ -163,8 +255,10 @@ Eigen code compiled into OpenVINS.
 
 ## Conclusion: legitimate noise vs regression
 
-**ATE.** On one sequence, a legitimate change can move ATE by −22% to +73% (MH_01) or
-−14% to +1% (V1_01). The upward side is what a gate cares about. An ATE-only tolerance tight
+**ATE.** On one sequence, a legitimate change moved ATE by −22% to +73% (MH_01) or
+−14% to +1% (V1_01) in this sample (9 variants, 27 runs each; not a bound). The geometric
+mean across both sequences narrows this to −14% to +25% (8 paired variants, 48 runs), and
+RPE moves far less: at most +6.2% on one sequence, and +3.1% aggregated. The upward side is what a gate cares about. An ATE-only tolerance tight
 enough to catch a +20% regression on MH_01 would also fail an innocent `fast_threshold`
 tweak. A tolerance loose enough to pass every innocent change (above +73%, about 158 mm)
 only catches gross breakage. Treat as "legitimate noise", per sequence:
@@ -230,7 +324,8 @@ BAG_START=38 RUNS=3 bash scripts/run_sequence.sh MH_01_easy results/sensitivity/
 MODE=realtime BAG_RATE=2.0 RUNS=3 bash scripts/run_sequence.sh MH_01_easy results/sensitivity/rt_rate_2.0
 
 # analysis (tables above)
-python -m vioreg.sensitivity --seqs MH_01_easy V1_01_easy --out docs/sensitivity/sensitivity.json
+python -m vioreg.sensitivity --seqs MH_01_easy V1_01_easy --out docs/sensitivity/sensitivity.json \
+  --markdown /tmp/sens_tables.md   # per-knob ATE/RPE table + cross-sequence geomean table
 
 # Part 3
 python -m vioreg.hostinfo --out docs/sensitivity/host_codespace.json
