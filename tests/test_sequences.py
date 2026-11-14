@@ -49,6 +49,9 @@ def test_ate_geometric_mean_within_gate():
 @pytest.mark.sequence
 def test_trajectories_match_baseline_warning_only():
     """Never fails: a pose-level change under an identical setup is reported for review."""
-    for w in report()["warnings"]:
+    rep = report()
+    for w in rep["warnings"]:
         gate.emit_warning(w)
         warnings.warn(w, UserWarning, stacklevel=1)
+    for n in rep["notes"]:
+        print(f"note: {n}")

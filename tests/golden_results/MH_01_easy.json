@@ -1,2 +1,37 @@
-{"sequence": "MH_01_easy", "note": "hand-made golden result for gate-logic tests only, NOT a real VIO run",
- "ate": {"ok": true, "rmse": 0.05, "coverage": 1.0}, "rpe": {"ok": true, "rmse": 0.02}}
+{
+  "sequence": "MH_01_easy",
+  "backend": "openvins",
+  "vio_commit": "93adc241390d13e99232652cf05cbe18a93c7bea",
+  "image_digest": "sha256:f08eacb146ff87f81849052494ee1e0a41798dc56271276f114b753d4439c308",
+  "harness_commit": "04fdb3c062bf00031f0cca221f0e69cdb2ef0bcc",
+  "config_hash": "5adca0e78514c871ab89438d9293e72d97360064",
+  "runs": 10,
+  "align": "posyaw",
+  "skip_s": 40.0,
+  "ate": {
+    "ok": true,
+    "rmse": 0.0909188275359106,
+    "median": 0.07254195269160132,
+    "max": 0.20850179479514877,
+    "coverage": 0.972833939738331,
+    "n": 2746
+  },
+  "rpe": {
+    "ok": true,
+    "rmse": 0.026387361050835688,
+    "delta_s": 1.0
+  },
+  "per_run_ate_rmse": [
+    0.0909188275359106,
+    0.0909188275359106,
+    0.0909188275359106,
+    0.0909188275359106,
+    0.0909188275359106,
+    0.0909188275359106,
+    0.0909188275359106,
+    0.0909188275359106,
+    0.0909188275359106,
+    0.0909188275359106
+  ],
+  "wall_s": 44.05500000000001
+}

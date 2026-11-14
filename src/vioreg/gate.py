@@ -155,19 +155,22 @@ def evaluate_aggregate(results: dict, cfg: dict) -> list[str]:
 
 
 # ---------------------------------------------------------------- 4: pose warning
-def pose_warnings(results_dir: Path, seq: str, result: dict, cfg: dict, root: Path) -> list[str]:
+def pose_warnings(results_dir: Path, seq: str, result: dict, cfg: dict,
+                  root: Path) -> tuple[list[str], list[str]]:
+    """(warnings, notes): a pose-level difference is a warning; a comparison that could not
+    be made (no baseline trajectory, no run*.tum next to the result) is only a note."""
     from .score import find_runs
     from .variance import pose_equivalent
 
     base, _ = find_baseline(cfg, seq, result)
     if base is None:
-        return []
+        return [], []
     ref = base.get("trajectory")
     if not ref or not (Path(root) / ref).is_file():
-        return [f"{seq}: pose comparison skipped (no baseline trajectory)"]
+        return [], [f"{seq}: pose comparison skipped (no baseline trajectory)"]
     runs = find_runs(Path(results_dir) / seq)
     if not runs:
-        return [f"{seq}: pose comparison skipped (no run*.tum next to the result)"]
+        return [], [f"{seq}: pose comparison skipped (no run*.tum next to the result)"]
     out = []
     for k, path in runs:
         try:
@@ -178,7 +181,7 @@ def pose_warnings(results_dir: Path, seq: str, result: dict, cfg: dict, root: Pa
             out.append(f"{seq}: run{k} trajectory differs from the baseline although "
                        f"vio_commit, image_digest and config_hash match "
                        "(behaviour changed: different host, harness or data?)")
-    return out
+    return out, []
 
 
 def emit_warning(msg: str) -> None:
@@ -201,10 +204,12 @@ def load_result(path: Path):
 def evaluate_results_dir(results_dir: Path, cfg: dict, require: bool,
                          root: Path | None = None) -> dict:
     """Evaluate every thresholds sequence. Returns {"sequences": {seq: [fails]},
-    "aggregate": [fails], "warnings": [...], "skipped": [...], "passed": bool}."""
+    "aggregate": [fails], "warnings": [...], "notes": [...], "skipped": [...],
+    "passed": bool}."""
     from .score import ROOT
     root = Path(root) if root is not None else ROOT
-    rep = {"sequences": {}, "aggregate": [], "warnings": [], "skipped": [], "passed": False}
+    rep = {"sequences": {}, "aggregate": [], "warnings": [], "notes": [], "skipped": [],
+           "passed": False}
     results = {}
     for seq in sorted(cfg.get("sequences", {})):
         f = Path(results_dir) / f"{seq}.json"
@@ -223,7 +228,9 @@ def evaluate_results_dir(results_dir: Path, cfg: dict, require: bool,
         results[seq] = r
         rep["sequences"][seq] = evaluate_sequence(r, cfg, seq)
         if not rep["sequences"][seq]:
-            rep["warnings"] += pose_warnings(results_dir, seq, r, cfg, root)
+            w, n = pose_warnings(results_dir, seq, r, cfg, root)
+            rep["warnings"] += w
+            rep["notes"] += n
     if not (rep["skipped"] and not require):
         rep["aggregate"] = evaluate_aggregate(results, cfg)
     rep["passed"] = (not any(rep["sequences"].values()) and not rep["aggregate"]
