@@ -42,3 +42,26 @@ def test_pick_windows_finds_the_spike_and_a_quiet_control():
     ctrl = [r for r in rows if r["source"] == "control"][0]
     assert worst["t0"] == 30.0 and worst["peak_err_m"] == pytest.approx(0.9)
     assert ctrl["peak_err_m"] == pytest.approx(0.05)
+
+
+# ---------------------------------------------------------------- S6: numpy-only blur
+@pytest.mark.parametrize("length", [3, 5, 9, 15])
+def test_motion_blur_matches_scipy_uniform_filter_nearest(length):
+    """faults.py must run in the pinned image (no scipy); the numpy box blur must equal the
+    scipy reference it replaces."""
+    from scipy.ndimage import uniform_filter1d
+    rng = np.random.default_rng(length)
+    img = rng.integers(0, 256, (40, 64), dtype=np.uint8)
+    ref = uniform_filter1d(img.astype(np.float32), size=length, axis=1,
+                           mode="nearest").astype(np.uint8)
+    got = motion_blur(img, length)
+    assert got.dtype == np.uint8 and got.shape == img.shape
+    assert np.abs(got.astype(int) - ref.astype(int)).max() <= 1  # float32 rounding at .0 edges
+    assert (got != ref).mean() < 0.01
+
+
+def test_motion_blur_rejects_even_or_tiny_length():
+    with pytest.raises(ValueError):
+        motion_blur(np.zeros((4, 8), np.uint8), 4)
+    with pytest.raises(ValueError):
+        motion_blur(np.zeros((4, 8), np.uint8), 1)

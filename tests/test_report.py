@@ -137,3 +137,15 @@ def test_fetch_failure_says_not_a_quality_result(setup):
     assert "### MH_03_medium: **DATA FETCH FAILED**" in md
     assert "data fetch failed, not a quality result" in md
     assert "DATA FETCH FAILED 1" in md and "QUALITY FAIL" not in md
+
+
+def test_injected_fault_banner_marks_a_demo_run(setup):
+    root, c = setup
+    res = root / "res"
+    write_results(res, {"MH_01_easy": result("MH_01_easy", rpe_x=2.0)})
+    md = report.render(res, c, root=root, seqs=["MH_01_easy"], injected_fault="blur=9")
+    head = md.split("### MH_01_easy", 1)[0]
+    assert "FAULT INJECTED: `blur=9`" in head and "expected" in head
+    assert "QUALITY FAIL" in md
+    plain = report.render(res, c, root=root, seqs=["MH_01_easy"])
+    assert "FAULT INJECTED" not in plain
