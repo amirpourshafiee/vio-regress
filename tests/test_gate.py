@@ -11,7 +11,7 @@ BASE = {"MH_01_easy": (0.0909, 0.0264, 0.973, 2746),
         "V1_01_easy": (0.0634, 0.0444, 0.968, 2768)}
 
 
-def cfg(rpe_max=1.10, ate_max=1.30, cov_drop=0.01, extra_key=None):
+def cfg(rpe_max=1.10, ate_max=1.30, cov_drop=0.01, n_drop=4, extra_key=None):
     seqs = {}
     for s, (a, r, c, n) in BASE.items():
         seqs[s] = {"skip_s": 0.0, "baselines": [{**KEY, "ate_rmse": a, "rpe_rmse": r,
@@ -21,7 +21,7 @@ def cfg(rpe_max=1.10, ate_max=1.30, cov_drop=0.01, extra_key=None):
                                          "coverage": 0.5, "n": 1})
     return {"version": 2, "defaults": {"align": "posyaw"},
             "margins": {"rpe_ratio_max": rpe_max, "ate_geomean_ratio_max": ate_max,
-                        "coverage_drop_max": cov_drop},
+                        "coverage_drop_max": cov_drop, "pose_count_drop_max": n_drop},
             "sequences": seqs}
 
 
@@ -52,7 +52,7 @@ def test_typical_baseline_run_passes():
     (dict(ok=False), "ok=false"),
     (dict(failed_runs=1), "failed run"),
     (dict(cov_d=-0.011), "coverage"),
-    (dict(n_d=-1), "pose count"),
+    (dict(n_d=-5), "pose count"),
 ])
 def test_hard_failures(bad, needle):
     fails = gate.evaluate_sequence(result("MH_01_easy", **bad), cfg(), "MH_01_easy")
@@ -62,6 +62,12 @@ def test_hard_failures(bad, needle):
 def test_coverage_within_one_point_and_more_poses_pass():
     assert gate.evaluate_sequence(result("MH_01_easy", cov_d=-0.009, n_d=+5), cfg(),
                                   "MH_01_easy") == []
+
+
+def test_recorder_race_pose_loss_within_allowance_passes():
+    """Up to 2 poses lost at each end by the recorder (identical estimator output)."""
+    assert gate.evaluate_sequence(result("MH_01_easy", n_d=-4), cfg(n_drop=4), "MH_01_easy") == []
+    assert gate.evaluate_sequence(result("MH_01_easy", n_d=-1), cfg(n_drop=0), "MH_01_easy")
 
 
 def test_rpe_ratio_over_margin_fails_with_numbers():

@@ -37,11 +37,15 @@ def _check_margins(m: dict) -> dict:
         return float(v)
     out = {"rpe_ratio_max": num("rpe_ratio_max"),
            "ate_geomean_ratio_max": num("ate_geomean_ratio_max"),
-           "coverage_drop_max": num("coverage_drop_max")}
+           "coverage_drop_max": num("coverage_drop_max"),
+           "pose_count_drop_max": num("pose_count_drop_max")}
     if out["rpe_ratio_max"] <= 1.0 or out["ate_geomean_ratio_max"] <= 1.0:
         raise ThresholdsError("ratio margins must be > 1, or the baseline itself fails")
     if out["coverage_drop_max"] < 0:
         raise ThresholdsError("coverage_drop_max must be >= 0")
+    if out["pose_count_drop_max"] < 0 or out["pose_count_drop_max"] != int(out["pose_count_drop_max"]):
+        raise ThresholdsError("pose_count_drop_max must be a non-negative integer")
+    out["pose_count_drop_max"] = int(out["pose_count_drop_max"])
     return out
 
 
@@ -97,7 +101,9 @@ HEADER = """\
 #  - a result is compared only with the baseline entry whose (vio_commit, image_digest,
 #    config_hash) matches; no matching entry = FAIL "needs re-baseline"
 #  - hard fail: ok=false, any failed run, coverage < baseline - coverage_drop_max,
-#    ate.n < baseline n, missing results when HARNESS_REQUIRE_RESULTS=1
+#    ate.n < baseline n - pose_count_drop_max (the allowance covers the recorder losing up
+#    to 2 poses at each end of an identical run), missing results when
+#    HARNESS_REQUIRE_RESULTS=1
 #  - RPE: per sequence, rpe.rmse / baseline rpe_rmse <= rpe_ratio_max
 #  - ATE: geometric mean over ALL sequences of ate.rmse / baseline ate_rmse
 #    <= ate_geomean_ratio_max (no single-sequence ATE limit)
@@ -121,6 +127,7 @@ def main(argv=None) -> int:
     ap.add_argument("--rpe-ratio-max", type=float, required=True)
     ap.add_argument("--ate-geomean-ratio-max", type=float, required=True)
     ap.add_argument("--coverage-drop-max", type=float, default=0.01)
+    ap.add_argument("--pose-count-drop-max", type=int, default=4)
     ap.add_argument("--trajectories", type=Path, default=None,
                     help="results dir of the baseline runs; copies baselines/<seq>.tum")
     ap.add_argument("--note", default="margins from docs/gate.md")
@@ -128,7 +135,8 @@ def main(argv=None) -> int:
     old = yaml.safe_load(a.thresholds.read_text())
     cfg = build(json.loads(a.baseline.read_text()),
                 {"rpe_ratio_max": a.rpe_ratio_max, "ate_geomean_ratio_max": a.ate_geomean_ratio_max,
-                 "coverage_drop_max": a.coverage_drop_max},
+                 "coverage_drop_max": a.coverage_drop_max,
+                 "pose_count_drop_max": a.pose_count_drop_max},
                 old, trajectories=a.trajectories, out_root=Path("."))
     write(cfg, a.thresholds, provenance_note=f"baseline {a.baseline}; {a.note}")
     print(a.thresholds.read_text())

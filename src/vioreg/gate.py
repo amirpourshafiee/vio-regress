@@ -3,7 +3,9 @@
 Design (docs/gate.md):
  1. Hard fail per sequence: missing/unparsable result, missing provenance, ate/rpe ok=false,
     any failed run, coverage below baseline - coverage_drop_max, associated pose count
-    (ate.n) below baseline.
+    (ate.n) below baseline - pose_count_drop_max. The pose-count allowance (S4) exists only
+    because the recorder can lose up to 2 poses at each end of an otherwise identical run
+    (startup and shutdown races of ov_eval pose_to_file; poseimu publisher queue = 2).
  2. RPE RMSE per sequence as a ratio to baseline: fail above margins.rpe_ratio_max.
  3. ATE RMSE only as the GEOMETRIC MEAN of per-sequence ratios across every sequence in
     the thresholds file: fail above margins.ate_geomean_ratio_max. No single-sequence ATE
@@ -60,7 +62,7 @@ def _num(x) -> bool:
 
 def margins(cfg: dict) -> dict:
     m = cfg.get("margins") or {}
-    for k in ("rpe_ratio_max", "ate_geomean_ratio_max", "coverage_drop_max"):
+    for k in ("rpe_ratio_max", "ate_geomean_ratio_max", "coverage_drop_max", "pose_count_drop_max"):
         if not _num(m.get(k)):
             raise ValueError(f"thresholds: margins.{k} missing or not a number")
     return m
@@ -109,8 +111,9 @@ def evaluate_sequence(result: dict, cfg: dict, seq: str) -> list[str]:
     if ate["coverage"] < base["coverage"] - m["coverage_drop_max"]:
         fails.append(f"coverage {ate['coverage']:.3f} < baseline {base['coverage']:.3f} - "
                      f"{m['coverage_drop_max']:.3f} (tracking lost or estimator died)")
-    if ate["n"] < base["n"]:
-        fails.append(f"associated pose count {ate['n']} < baseline {base['n']}")
+    if ate["n"] < base["n"] - m["pose_count_drop_max"]:
+        fails.append(f"associated pose count {ate['n']} < baseline {base['n']} - "
+                     f"{m['pose_count_drop_max']:g}")
     ratio = rpe["rmse"] / base["rpe_rmse"]
     if ratio > m["rpe_ratio_max"]:
         fails.append(f"RPE ratio {ratio:.3f} > {m['rpe_ratio_max']:.3f} "

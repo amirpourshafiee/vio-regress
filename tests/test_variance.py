@@ -154,3 +154,37 @@ def test_baseline_json_carries_coverage_and_pose_count(variant_root):
     s = variance.build_baseline(root, [SEQ], data, thr)["sequences"][SEQ]
     assert len(s["per_run_coverage"]) == 4 and s["per_run_coverage"][3] is None
     assert s["per_run_n"][0] == s["per_run_n"][1] > 0 and s["per_run_n"][3] is None
+
+
+def test_missing_first_poses_are_the_same_trajectory(tmp_path):
+    """S4: the poseimu publisher queue is 2, so the recorder can miss the FIRST poses when it
+    subscribes late (seen on MH_03: 2 leading poses). Same estimator output."""
+    a, b = tmp_path / "a.tum", tmp_path / "b.tum"
+    rows = _rows(8)
+    _write(a, rows)
+    _write(b, rows[2:])
+    assert variance.pose_equivalent(a, b) and variance.pose_equivalent(b, a)
+
+
+def test_missing_first_and_last_poses_together(tmp_path):
+    a, b = tmp_path / "a.tum", tmp_path / "b.tum"
+    rows = _rows(10)
+    _write(a, rows[2:])
+    _write(b, rows[:-2])
+    assert variance.pose_equivalent(a, b)
+
+
+def test_a_missing_middle_pose_is_a_different_trajectory(tmp_path):
+    a, b = tmp_path / "a.tum", tmp_path / "b.tum"
+    rows = _rows(10)
+    _write(a, rows)
+    _write(b, rows[:5] + rows[6:])
+    assert not variance.pose_equivalent(a, b)
+
+
+def test_three_missing_leading_poses_is_too_many(tmp_path):
+    a, b = tmp_path / "a.tum", tmp_path / "b.tum"
+    rows = _rows(10)
+    _write(a, rows)
+    _write(b, rows[3:])
+    assert not variance.pose_equivalent(a, b)

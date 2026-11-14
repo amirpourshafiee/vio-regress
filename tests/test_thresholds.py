@@ -8,7 +8,8 @@ from vioreg import gate, thresholds
 
 KEY = {"vio_commit": "a" * 40, "image_digest": "sha256:" + "b" * 64, "harness_commit": "d" * 40,
        "config_hash": "c" * 40}
-MARGINS = {"rpe_ratio_max": 1.10, "ate_geomean_ratio_max": 1.30, "coverage_drop_max": 0.01}
+MARGINS = {"rpe_ratio_max": 1.10, "ate_geomean_ratio_max": 1.30, "coverage_drop_max": 0.01,
+           "pose_count_drop_max": 4}
 OLD = {"defaults": {"align": "posyaw", "min_coverage": 0.95},
        "sequences": {"MH_01_easy": {"max_ate_m": 0.15, "skip_s": 40},
                      "V1_01_easy": {"max_ate_m": 0.15, "skip_s": 0}}}
@@ -61,7 +62,8 @@ def test_refuses_baseline_without_provenance(field):
 
 
 @pytest.mark.parametrize("bad", [{"rpe_ratio_max": 0.9}, {"ate_geomean_ratio_max": 1.0},
-                                 {"coverage_drop_max": -0.01}, {"rpe_ratio_max": None}])
+                                 {"coverage_drop_max": -0.01}, {"rpe_ratio_max": None},
+                                 {"pose_count_drop_max": -1}, {"pose_count_drop_max": 2.5}])
 def test_rejects_margins_that_would_fail_the_baseline_itself(bad):
     with pytest.raises(thresholds.ThresholdsError):
         thresholds.build(baseline(), {**MARGINS, **bad}, OLD)
