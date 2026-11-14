@@ -1,5 +1,8 @@
 # Shared helpers for scripts/experiments/*.sh (sourced, not executed).
 PY=${PY:-.venv/bin/python}
+# Use THIS checkout's src/ (not whatever the venv's editable install points at), so
+# harness_commit in every score JSON names the code that actually ran.
+export PYTHONPATH="$(pwd)/src${PYTHONPATH:+:${PYTHONPATH}}"
 MIN_FREE_GB=${MIN_FREE_GB:-2}
 
 free_gb() { df --output=avail -B1 / | tail -1 | awk '{printf "%.2f", $1/1e9}'; }
