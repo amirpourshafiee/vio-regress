@@ -1,0 +1,115 @@
+{
+ "source": {
+  "variant": "bad_num_pts_50",
+  "root": "results/sensitivity",
+  "real_key": {
+   "MH_01_easy": {
+    "vio_commit": "93adc241390d13e99232652cf05cbe18a93c7bea",
+    "image_digest": "sha256:f08eacb146ff87f81849052494ee1e0a41798dc56271276f114b753d4439c308",
+    "config_hash": "b36f4ab70457cdc3f7ba3b1fdc1482899decb7ba"
+   },
+   "MH_03_medium": {
+    "vio_commit": "93adc241390d13e99232652cf05cbe18a93c7bea",
+    "image_digest": "sha256:f08eacb146ff87f81849052494ee1e0a41798dc56271276f114b753d4439c308",
+    "config_hash": "b36f4ab70457cdc3f7ba3b1fdc1482899decb7ba"
+   },
+   "V1_01_easy": {
+    "vio_commit": "93adc241390d13e99232652cf05cbe18a93c7bea",
+    "image_digest": "sha256:f08eacb146ff87f81849052494ee1e0a41798dc56271276f114b753d4439c308",
+    "config_hash": "b36f4ab70457cdc3f7ba3b1fdc1482899decb7ba"
+   }
+  }
+ },
+ "results": {
+  "MH_01_easy": {
+   "sequence": "MH_01_easy",
+   "backend": "openvins",
+   "vio_commit": "93adc241390d13e99232652cf05cbe18a93c7bea",
+   "image_digest": "sha256:f08eacb146ff87f81849052494ee1e0a41798dc56271276f114b753d4439c308",
+   "harness_commit": "e976795b3163f2364dd562277c857a63a3691997",
+   "config_hash": "5adca0e78514c871ab89438d9293e72d97360064",
+   "runs": 3,
+   "align": "posyaw",
+   "skip_s": 40.0,
+   "ate": {
+    "ok": true,
+    "rmse": 0.10254334683086626,
+    "median": 0.09143024666062352,
+    "max": 0.2178998402058496,
+    "coverage": 0.972833939738331,
+    "n": 2746
+   },
+   "rpe": {
+    "ok": true,
+    "rmse": 0.03774770493684417,
+    "delta_s": 1.0
+   },
+   "per_run_ate_rmse": [
+    0.10254334683086626,
+    0.10254334683086626,
+    0.10254334683086626
+   ],
+   "wall_s": 23.376
+  },
+  "MH_03_medium": {
+   "sequence": "MH_03_medium",
+   "backend": "openvins",
+   "vio_commit": "93adc241390d13e99232652cf05cbe18a93c7bea",
+   "image_digest": "sha256:f08eacb146ff87f81849052494ee1e0a41798dc56271276f114b753d4439c308",
+   "harness_commit": "e976795b3163f2364dd562277c857a63a3691997",
+   "config_hash": "5adca0e78514c871ab89438d9293e72d97360064",
+   "runs": 3,
+   "align": "posyaw",
+   "skip_s": 15.0,
+   "ate": {
+    "ok": true,
+    "rmse": 0.1525971660546941,
+    "median": 0.13470213970282552,
+    "max": 0.31459632756307404,
+    "coverage": 0.9793141938116245,
+    "n": 2275
+   },
+   "rpe": {
+    "ok": true,
+    "rmse": 0.060508521837509675,
+    "delta_s": 1.0
+   },
+   "per_run_ate_rmse": [
+    0.1525971660546941,
+    0.1525971660546941,
+    0.1525971660546941
+   ],
+   "wall_s": 20.858
+  },
+  "V1_01_easy": {
+   "sequence": "V1_01_easy",
+   "backend": "openvins",
+   "vio_commit": "93adc241390d13e99232652cf05cbe18a93c7bea",
+   "image_digest": "sha256:f08eacb146ff87f81849052494ee1e0a41798dc56271276f114b753d4439c308",
+   "harness_commit": "e976795b3163f2364dd562277c857a63a3691997",
+   "config_hash": "5adca0e78514c871ab89438d9293e72d97360064",
+   "runs": 3,
+   "align": "posyaw",
+   "skip_s": 0.0,
+   "ate": {
+    "ok": true,
+    "rmse": 0.07506435730144662,
+    "median": 0.07091058910175925,
+    "max": 0.15206643214121768,
+    "coverage": 0.9679217023654207,
+    "n": 2757
+   },
+   "rpe": {
+    "ok": true,
+    "rmse": 0.04567707431332497,
+    "delta_s": 1.0
+   },
+   "per_run_ate_rmse": [
+    0.07506435730144662,
+    0.07506435730144662,
+    0.07506435730144662
+   ],
+   "wall_s": 27.019
+  }
+ }
+}

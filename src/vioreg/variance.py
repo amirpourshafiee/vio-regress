@@ -47,29 +47,37 @@ def spread(values) -> dict:
             "min": float(ok.min()), "max": float(ok.max()), "range": float(ok.max() - ok.min())}
 
 
-MAX_TRAILING = 2  # poses one run may have past the other's end (recorder shutdown race)
+MAX_EDGE = 2  # poses one run may lack at EACH end (recorder startup/shutdown races)
+MAX_TRAILING = MAX_EDGE  # backwards-compatible name
 
 
-def pose_equivalent(a: Path, b: Path, max_trailing: int = MAX_TRAILING) -> bool:
+def pose_equivalent(a: Path, b: Path, max_trailing: int = MAX_EDGE) -> bool:
     """True if two trajectories are the same estimator output.
 
-    Compared pose by pose on the printed values (t, p, q as written to the TUM file):
-    the shorter run must be an exact prefix of the longer, and the longer may have at
-    most `max_trailing` extra poses at its end. S3b showed the recorder can drop the final
-    pose at shutdown, so file checksums over-count distinct trajectories; anything else
-    (a moved pose, a different start, a run cut short) is a different trajectory.
+    Compared pose by pose on the printed values (t, p, q as written to the TUM file). The
+    poses the runs share by timestamp must be bit-identical and form ONE contiguous block
+    in both files; outside it each run may have at most `max_trailing` extra poses at the
+    START and at the END. Why: the recorder (ov_eval pose_to_file, a separate ROS node) can
+    miss the final pose at shutdown (S3b) and the first poses when it subscribes after the
+    estimator's first publications (poseimu publisher queue is 2; S4, MH_03). A moved pose,
+    a gap in the middle, a different start, or a run cut short by more than that is a
+    different trajectory.
     """
     ta, tb = load_tum(a), load_tum(b)
-    if len(ta) > len(tb):
-        ta, tb = tb, ta
-    n = len(ta)
-    if n == 0 or len(tb) - n > max_trailing:
+    if len(ta) == 0 or len(tb) == 0:
         return False
-    return (np.array_equal(ta.t, tb.t[:n]) and np.array_equal(ta.p, tb.p[:n])
-            and np.array_equal(ta.q, tb.q[:n]))
+    common, ia, ib = np.intersect1d(ta.t, tb.t, return_indices=True)
+    if len(common) == 0:
+        return False
+    for idx, tr in ((ia, ta), (ib, tb)):
+        if not np.all(np.diff(idx) == 1):  # a gap inside the shared block
+            return False
+        if idx[0] > max_trailing or len(tr) - 1 - idx[-1] > max_trailing:
+            return False
+    return np.array_equal(ta.p[ia], tb.p[ib]) and np.array_equal(ta.q[ia], tb.q[ib])
 
 
-def distinct_trajectories(paths, max_trailing: int = MAX_TRAILING) -> int:
+def distinct_trajectories(paths, max_trailing: int = MAX_EDGE) -> int:
     """Number of pose-level-distinct trajectories (each compared with one representative
     per group)."""
     reps: list[Path] = []
@@ -141,6 +149,8 @@ def build_baseline(variant_root: Path, seqs, data_root: Path, thresholds: dict) 
             "per_run_ate_rmse": [r["ate_rmse"] for r in runs],
             "per_run_rpe_rmse": [r["rpe_rmse"] for r in runs],
             "per_run_ok": [r["ok"] for r in runs],
+            "per_run_coverage": [r["coverage"] for r in runs],
+            "per_run_n": [r["n"] for r in runs],  # associated poses (ate.n)
         }
     return out
 
