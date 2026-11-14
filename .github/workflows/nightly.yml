@@ -1,17 +1,19 @@
 name: nightly-vio
 # Manual only (S5a). A schedule is added in a later session, after a green manual run.
-# Builds the pinned OpenVINS image, runs the requested sequence(s) RUNS times, scores them
-# and judges them with the gate (src/vioreg/gate.py, docs/gate.md). Expected verdict while
-# the image is rebuilt here: "needs re-baseline" (a rebuilt image has a new image_digest);
-# the job summary still compares poses and the RPE ratio with the baseline, labelled
-# informational. The EuRoC dataset is fetched per run and is never cached or uploaded.
+# Pulls the published OpenVINS image pinned by registry digest in docker/IMAGE_REF (never
+# builds it), then per sequence: fetch, run RUNS times (serial replay), score, delete the bag,
+# with df -h at each phase. The gate (src/vioreg/gate.py, docs/gate.md) judges all sequences
+# together and fails closed. image_digest is the registry digest, so a run of the pinned image
+# has the same baseline key as configs/thresholds.yaml (S5b). The package is public: the pull
+# is anonymous and the token stays contents:read; a private package fails the pull.
+# The EuRoC dataset is fetched per run and is never cached or uploaded.
 on:
   workflow_dispatch:
     inputs:
       sequences:
         description: "Space-separated EuRoC sequences, each listed in configs/thresholds.yaml"
         type: string
-        default: "MH_01_easy"
+        default: "MH_01_easy V1_01_easy MH_03_medium"
       runs:
         description: "Runs per sequence (2 shows whether runs agree with each other)"
         type: string
@@ -31,7 +33,6 @@ jobs:
     env:
       SEQS: ${{ inputs.sequences }}
       RUNS: ${{ inputs.runs }}
-      IMAGE: vioreg-openvins:v2.7
     steps:
       - name: Host fingerprint (CPU model and SIMD flags)
         run: |
@@ -60,7 +61,7 @@ jobs:
           cp "$RUNNER_TEMP/host/cpuinfo.txt" results/host_ci_cpuinfo.txt
           PYTHONPATH=src python3 -m vioreg.hostinfo --out results/host_ci.json
 
-      - name: Free disk (runner documents a 14 GB SSD; the image build alone peaks near 10 GB)
+      - name: Free disk (runner documents a 14 GB SSD; the pulled image is about 7.8 GB)
         run: |
           df -h /
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
@@ -75,39 +76,49 @@ jobs:
       - name: Install the harness
         run: pip install -e . pytest
 
-      - name: Build the pinned VIO image
+      - name: Pull the pinned VIO image (docker/IMAGE_REF; verify its registry digest)
         run: |
-          docker build -t "$IMAGE" -f docker/Dockerfile.openvins docker
-          docker image inspect "$IMAGE" \
+          [ "$(wc -l < docker/IMAGE_REF)" -eq 1 ] || { echo "::error::docker/IMAGE_REF must be one line"; exit 1; }
+          ref=$(cat docker/IMAGE_REF)
+          re='^ghcr\.io/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$'
+          [[ "$ref" =~ $re ]] || { echo "::error::docker/IMAGE_REF is not <repo>@sha256:<64 hex>: $ref"; exit 1; }
+          docker pull "$ref"
+          docker image inspect "$ref" --format '{{range .RepoDigests}}{{println .}}{{end}}' \
+            | grep -qxF "$ref" || { echo "::error::pulled image does not carry the pinned digest"; exit 1; }
+          docker image inspect "$ref" \
             --format 'image {{.Id}}  ov_ref {{index .Config.Labels "vioreg.ov_ref"}}'
-          docker builder prune -af   # drop the build cache before the dataset lands
+          echo "IMAGE=$ref" >> "$GITHUB_ENV"
           df -h /
 
-      - name: Fetch the sequences (range requests; not cached, not uploaded)
-        run: |
-          avail=$(df --output=avail -B1 / | tail -1)
-          if [ "$avail" -lt 5000000000 ]; then
-            echo "::error::only $((avail / 1000000)) MB free before fetching; need about 5 GB"
-            exit 1
-          fi
-          read -ra seq_list <<< "$SEQS"
-          bash scripts/fetch_euroc.sh data/euroc "${seq_list[@]}"
-          df -h /
-
-      - name: Run VIO (serial replay, RUNS per sequence)
+      - name: Per sequence - fetch, run (serial, RUNS), score, delete the bag
         run: |
           read -ra seq_list <<< "$SEQS"
           rc=0
+          bag=""
+          trap 'rm -f "$bag"' EXIT   # never leave a bag behind, whatever fails
           for s in "${seq_list[@]}"; do
-            bash scripts/run_sequence.sh "$s" results || rc=1
+            echo "::group::$s"
+            bag="data/euroc/$s/$s.bag"
+            echo "df before fetch ($s):"; df -h /
+            avail=$(df --output=avail -B1 / | tail -1)
+            if [ "$avail" -lt 5000000000 ]; then
+              echo "::error::$s: only $((avail / 1000000)) MB free before fetching; need about 5 GB"
+              rc=1
+            elif bash scripts/fetch_euroc.sh data/euroc "$s"; then
+              echo "df after fetch ($s):"; df -h /
+              bash scripts/run_sequence.sh "$s" results || rc=1
+              echo "df after run ($s):"; df -h /
+            else
+              echo "::error::$s: fetch failed"
+              rc=1
+            fi
+            # Always score: a sequence that did not run gets a failed result, not a gap.
+            python -m vioreg.score --seqs "$s" --out results --image "$IMAGE" || rc=1
+            rm -f "$bag"
+            echo "df after deleting the bag ($s):"; df -h /
+            echo "::endgroup::"
           done
           exit $rc
-
-      - name: Score
-        if: ${{ !cancelled() }}
-        run: |
-          read -ra seq_list <<< "$SEQS"
-          python -m vioreg.score --seqs "${seq_list[@]}" --out results --image "$IMAGE"
 
       - name: Gate (fails closed; NEEDS RE-BASELINE and QUALITY FAIL are labelled apart)
         if: ${{ !cancelled() }}
