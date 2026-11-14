@@ -25,6 +25,7 @@ Everything fails closed: on any error the partial file is deleted and we exit no
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import struct
 import sys
@@ -76,6 +77,16 @@ class FetchError(RuntimeError):
     pass
 
 
+class FetchUnavailable(FetchError):
+    """Transient: HTTP 429/5xx, a timeout or a dropped connection that persisted after the
+    retries. The data could not be fetched; it says nothing about VIO quality."""
+
+
+EXIT_UNAVAILABLE = 75  # EX_TEMPFAIL: transient failure after every retry (1 = any other failure)
+TRANSIENT_HTTP = (429, 500, 502, 503, 504)
+TRANSIENT_NET = (urllib.error.URLError, TimeoutError, ConnectionError, http.client.HTTPException)
+
+
 def archive_for(seq: str) -> Archive:
     for env, seqs in SEQUENCES.items():
         if seq in seqs:
@@ -91,33 +102,50 @@ def check_budget(nbytes: float, max_bytes: float, consent: bool) -> None:
 
 # ---------------------------------------------------------------- transport
 class HttpTransport:
-    """Range GETs with bounded retry on 429/5xx (the server rate-limits scrapers)."""
+    """Range GETs with bounded retry and exponential backoff (backoff_s * 2**attempt) on
+    HTTP 429/5xx, timeouts and refused/reset connections (the server rate-limits scrapers).
+    Exhausted transient errors raise FetchUnavailable; any other HTTP error raises
+    FetchError at once. A drop while reading a body also raises FetchUnavailable, so the
+    caller can restart the whole sequence (main(): --attempts)."""
 
-    def __init__(self, retries: int = 5, backoff_s: float = 10.0):
+    def __init__(self, retries: int = 5, backoff_s: float = 10.0,
+                 opener=urllib.request.urlopen, sleep=time.sleep):
         self.retries, self.backoff_s = retries, backoff_s
+        self.opener, self.sleep = opener, sleep
 
     def _open(self, url, a, b):
         req = urllib.request.Request(url, headers={"Range": f"bytes={a}-{b}",
                                                    "User-Agent": USER_AGENT})
         for attempt in range(self.retries + 1):
             try:
-                r = urllib.request.urlopen(req, timeout=120)
-            except urllib.error.HTTPError as e:
-                if e.code in (429, 500, 502, 503, 504) and attempt < self.retries:
-                    time.sleep(self.backoff_s * 2 ** attempt)
-                    continue
-                raise FetchError(f"HTTP {e.code} for {url} bytes={a}-{b}") from e
-            if r.status != 206:  # a 200 would silently send the whole 12 GB archive
-                raise FetchError(f"server ignored Range (HTTP {r.status}) for {url}")
-            return r
-        raise FetchError("unreachable")
+                r = self.opener(req, timeout=120)
+            except urllib.error.HTTPError as e:  # a URLError subclass: must come first
+                if e.code not in TRANSIENT_HTTP:
+                    raise FetchError(f"HTTP {e.code} for {url} bytes={a}-{b}") from e
+                err = f"HTTP {e.code}"
+            except TRANSIENT_NET as e:
+                err = f"{type(e).__name__}: {e}"
+            else:
+                if r.status != 206:  # a 200 would silently send the whole 12 GB archive
+                    raise FetchError(f"server ignored Range (HTTP {r.status}) for {url}")
+                return r
+            if attempt < self.retries:
+                self.sleep(self.backoff_s * 2 ** attempt)
+        raise FetchUnavailable(f"{err} for {url} bytes={a}-{b} after {self.retries} retries")
+
+    def _read(self, r, n=-1):
+        try:
+            return r.read(n)
+        except (OSError, http.client.HTTPException) as e:  # reset, timeout, IncompleteRead
+            raise FetchUnavailable(f"connection dropped while reading: "
+                                   f"{type(e).__name__}: {e}") from e
 
     def size(self, url):
         r = self._open(url, 0, 0)
         return int(r.headers["Content-Range"].rsplit("/", 1)[1])
 
     def get(self, url, a, b):
-        data = self._open(url, a, b).read()
+        data = self._read(self._open(url, a, b))
         if len(data) != b - a + 1:
             raise FetchError(f"short read {len(data)} != {b - a + 1}")
         return data
@@ -125,7 +153,7 @@ class HttpTransport:
     def stream(self, url, a, b, chunk=1 << 20):
         r = self._open(url, a, b)
         while True:
-            d = r.read(chunk)
+            d = self._read(r, chunk)
             if not d:
                 return
             yield d
@@ -288,22 +316,75 @@ def fetch_sequence(seq: str, out_root: str | Path, transport=None, url=None) -> 
     return out
 
 
-def main(argv=None) -> int:
+def _with_retry(fn, attempts: int, backoff_s: float, sleep, what: str):
+    """Call fn(); on FetchUnavailable wait backoff_s * 2**i and try again, up to `attempts`
+    calls in all. Returns (value, calls). Re-raises the last FetchUnavailable with .calls."""
+    for i in range(attempts):
+        try:
+            return fn(), i + 1
+        except FetchUnavailable as e:
+            if i + 1 == attempts:
+                e.calls = attempts
+                raise
+            wait = backoff_s * 2 ** i
+            print(f"  {what}: {e}; attempt {i + 1}/{attempts} failed, retrying in {wait:.0f} s",
+                  file=sys.stderr, flush=True)
+            sleep(wait)
+
+
+def _write_status(status_dir, seq: str, ok: bool, kind: str, attempts: int, reason: str = ""):
+    """<status_dir>/<seq>.fetch.json, always written so a stale failure cannot linger.
+    kind: ok | unavailable (transient, after retries) | error (anything else)."""
+    if status_dir is None:
+        return
+    Path(status_dir).mkdir(parents=True, exist_ok=True)
+    (Path(status_dir) / f"{seq}.fetch.json").write_text(json.dumps(
+        {"sequence": seq, "ok": ok, "kind": kind, "attempts": attempts, "reason": reason}) + "\n")
+
+
+def main(argv=None, transport_factory=HttpTransport, sleep=time.sleep) -> int:
+    """Exit 0 = fetched; EXIT_UNAVAILABLE (75) = transient failure (429/5xx, timeout, dropped
+    connection) after every retry; 1 = any other failure (integrity, missing member, size
+    guard, unknown sequence). Exits 75 and 1 both mean "no data", never a quality result."""
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("out_root")
     ap.add_argument("sequences", nargs="+")
     ap.add_argument("--yes", action="store_true", help="allow plans above --max-gb")
     ap.add_argument("--max-gb", type=float, default=DEFAULT_MAX_BYTES / 1e9)
+    ap.add_argument("--attempts", type=int, default=3,
+                    help="whole-sequence attempts on a transient failure (each request "
+                         "also retries 5 times with its own backoff)")
+    ap.add_argument("--backoff-s", type=float, default=60.0,
+                    help="wait before the 2nd attempt; doubles each time")
+    ap.add_argument("--status-dir", default=None,
+                    help="write <dir>/<seq>.fetch.json with the outcome of each sequence")
     a = ap.parse_args(argv)
+    if a.attempts < 1:
+        ap.error("--attempts must be >= 1")
+    tr = transport_factory()
+    current, calls = list(a.sequences), 0
     try:
         todo = [s for s in a.sequences if not is_complete(Path(a.out_root) / s)]
-        total = sum(plan_bytes(s) for s in todo)
+        total, calls = _with_retry(lambda: sum(plan_bytes(s, transport=tr) for s in todo),
+                                   a.attempts, a.backoff_s, sleep, "plan")
         print(f"plan: {len(todo)} sequence(s), {total / 1e9:.2f} GB to transfer", flush=True)
         check_budget(total, a.max_gb * 1e9, a.yes)
         for s in a.sequences:
+            current = [s]
             print(f"fetch {s} ...", flush=True)
-            print(f"  ok -> {fetch_sequence(s, a.out_root)}", flush=True)
+            out, calls = _with_retry(lambda: fetch_sequence(s, a.out_root, transport=tr),
+                                     a.attempts, a.backoff_s, sleep, s)
+            _write_status(a.status_dir, s, True, "ok", calls)
+            print(f"  ok -> {out}", flush=True)
+    except FetchUnavailable as e:
+        for s in current:
+            _write_status(a.status_dir, s, False, "unavailable", getattr(e, "calls", calls), str(e))
+        print(f"fetch_euroc: FAIL (data unavailable after {a.attempts} attempts, "
+              f"not a quality result): {e}", file=sys.stderr)
+        return EXIT_UNAVAILABLE
     except (FetchError, ValueError) as e:
+        for s in current:
+            _write_status(a.status_dir, s, False, "error", max(calls, 1), str(e))
         print(f"fetch_euroc: FAIL: {e}", file=sys.stderr)
         return 1
     return 0

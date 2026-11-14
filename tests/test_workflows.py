@@ -24,12 +24,31 @@ def steps(wf):
     return job["steps"]
 
 
-def test_manual_trigger_only_no_schedule(wf):
+def test_triggers_are_dispatch_and_one_daily_schedule(wf):
+    """S5c: daily at 11:17 UTC (about 3:17 AM Pacific, off the top of the hour), plus manual."""
     t = triggers(wf)
-    assert set(t) == {"workflow_dispatch"}
-    # no schedule: key, live or commented out (a prose mention of the word is fine)
-    assert not re.search(r"^\s*#?\s*schedule\s*:", WF.read_text(), re.M)
-    assert not re.search(r"^\s*#?\s*-?\s*cron\s*:", WF.read_text(), re.M)
+    assert set(t) == {"workflow_dispatch", "schedule"}
+    assert t["schedule"] == [{"cron": "17 11 * * *"}]
+    assert len(re.findall(r"^\s*-?\s*cron\s*:", WF.read_text(), re.M)) == 1
+
+
+def test_scheduled_run_gets_the_same_defaults_as_a_manual_run(wf):
+    """A scheduled run has no inputs: the env must fall back to exactly the input defaults,
+    or SEQS would be empty and the run would fail validation (or judge nothing)."""
+    (job,) = wf["jobs"].values()
+    inp = triggers(wf)["workflow_dispatch"]["inputs"]
+    assert job["env"]["SEQS"] == f"${{{{ inputs.sequences || '{inp['sequences']['default']}' }}}}"
+    assert job["env"]["RUNS"] == f"${{{{ inputs.runs || '{inp['runs']['default']}' }}}}"
+
+
+def test_nightly_runs_only_on_the_default_branch(wf):
+    (job,) = wf["jobs"].values()
+    assert job.get("if") == "github.ref == 'refs/heads/main'"
+
+
+def test_two_nightly_runs_cannot_overlap(wf):
+    assert wf["concurrency"]["group"] == "nightly-vio"
+    assert wf["concurrency"]["cancel-in-progress"] is False  # queue, never kill a running job
 
 
 def test_inputs_and_defaults(wf):
@@ -255,3 +274,19 @@ def test_image_ref_validated_against_exactly_this_repo(wf):
     # and the committed file passes that exact pattern
     ref = (ROOT / "docker" / "IMAGE_REF").read_text()
     assert re.fullmatch(r"ghcr\.io/amirpourshafiee/vioreg-openvins@sha256:[0-9a-f]{64}\n", ref)
+
+
+# ---------------------------------------------------------------- S5c: fetch retry + labels
+def test_fetch_retries_and_records_status_for_the_gate(wf):
+    run = _step_with(wf, "scripts/run_sequence.sh")["run"]
+    fetch_line = next(l for l in run.splitlines() if "scripts/fetch_euroc.sh" in l)
+    assert "--attempts 3" in fetch_line and "--backoff-s 60" in fetch_line
+    assert "--status-dir results" in fetch_line
+    assert "fetch_rc=$?" in run and '"$fetch_rc" -eq 75' in run
+    assert "data fetch failed, not a quality result" in run
+
+
+def test_publish_image_runs_only_on_main_and_nothing_else_changed(pub):
+    (job,) = pub["jobs"].values()
+    assert job.get("if") == "github.ref == 'refs/heads/main'"
+    assert set(triggers(pub)) == {"workflow_dispatch"}

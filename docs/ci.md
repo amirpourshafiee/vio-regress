@@ -1,15 +1,15 @@
-# Nightly VIO job on a GitHub-hosted runner (sessions S5a, S5b)
+# Nightly VIO job on a GitHub-hosted runner (sessions S5a, S5b, S5c)
 
-`.github/workflows/nightly.yml`, **manual trigger only** (`workflow_dispatch`; inputs
-`sequences`, default `MH_01_easy V1_01_easy MH_03_medium`, and `runs`, default `2`). There
-is no schedule yet. Since S5b it **pulls** the image pinned in `docker/IMAGE_REF` and checks
+`.github/workflows/nightly.yml` runs **daily at 11:17 UTC** and on manual dispatch
+(`workflow_dispatch`; inputs `sequences`, default `MH_01_easy V1_01_easy MH_03_medium`, and
+`runs`, default `2`; a scheduled run uses the same defaults). Since S5b it **pulls** the image pinned in `docker/IMAGE_REF` and checks
 its registry digest (S5a built the image instead). Then, for each sequence, it fetches,
 runs, scores and deletes the bag, printing `df -h /` at each phase. It judges all sequences
 with the gate (fails closed), writes a job summary, and uploads `results/` plus
 `junit-gate.xml` (never the dataset).
 
-Sections 1–2 below record the S5a design and its first run. Section 3 is the current S5b
-design.
+Sections 1–2 below record the S5a design and its first run. Section 3 is the S5b image
+design. Section 4 (S5c) covers the schedule and fetch failures.
 
 ## Can a standard runner do it?
 
@@ -125,13 +125,63 @@ conservative for this run. Hosted runner sizes can change, so the "Free disk" st
 re-baseline. If the new image reproduces the baseline poses, re-key as above. If it does
 not, re-record the baseline and review the margins.
 
+## S5c: daily schedule, main only, fetch failures labelled
+
+**Schedule.** `cron: "17 11 * * *"` runs every day at 11:17 UTC. That's 3:17 AM Pacific
+standard time, or 4:17 AM in summer time, because cron uses UTC. The minute is off the top
+of the hour on purpose: GitHub's scheduler is busiest at :00, and scheduled runs can then
+start late or be dropped. A scheduled run uses the workflow file and code at the **latest
+commit on the default branch**, and has no inputs. The job env falls back to the input
+defaults (`inputs.sequences || '…'`), and a test keeps the two identical. The schedule only
+takes effect once this file is on `main`.
+
+**Main only.** The job has `if: github.ref == 'refs/heads/main'`. A dispatch from any other
+branch shows the job as *skipped* (not failed, and judging nothing), so start manual runs
+from `main`. `publish-image.yml` has the same job-level guard, so the image can only be
+built and pushed from `main`.
+
+**No overlap.** The `concurrency` group `nightly-vio` with `cancel-in-progress: false` makes
+a second run wait while one is running. A running job is never cancelled. If more runs
+arrive, GitHub keeps only the newest one pending.
+
+**Scheduled runs can be switched off by GitHub.** In a public repository, GitHub
+automatically disables scheduled workflows after **60 days without repository activity**
+(no commits and similar). A disabled workflow simply stops running: no red run appears, so
+check the Actions tab if the daily runs stop. To re-enable it:
+- in the browser: **Actions → nightly-vio → "Enable workflow"** (the banner at the top), or
+- `gh workflow enable nightly-vio` with a token that has `actions: write`. The Codespace
+  token cannot do this; the owner does it.
+Any commit to the repository also resets the 60-day clock.
+
+**Fetch retries.** The EuRoC server rate-limits. `src/vioreg/fetch.py` retries at two levels:
+1. each HTTP range request retries HTTP 429/500/502/503/504, timeouts and refused or reset
+   connections up to 5 times, waiting 10, 20, 40, 80 and 160 s;
+2. `--attempts 3 --backoff-s 60` restarts the whole sequence after a transient failure,
+   including a connection dropped mid-download, waiting 60 s and then 120 s. Partial files
+   are always deleted.
+A transient failure that survives every retry exits **75**. Any other fetch failure
+(integrity or CRC mismatch, missing member, size guard, unknown sequence, permanent HTTP
+error) exits **1**. Either way, `--status-dir results` writes `results/<seq>.fetch.json`
+(`ok`, `kind` = ok | unavailable | error, `attempts`, `reason`). It is written on success too,
+so a stale failure can never mislabel a later run.
+
+**Fetch failure vs gate failure.** When `results/<seq>.fetch.json` records a failure, the
+gate gives that sequence the verdict **DATA FETCH FAILED**, with the message *"data fetch
+failed, not a quality result"* and the reason. This takes precedence over every other
+verdict, because without data every other failure is a consequence. The ATE aggregate
+reports *"not judged: data fetch failed for <seq>, not a quality result"*. Both still
+**fail** the gate (fail closed: no data is never a pass), but the job summary and the gate
+message say plainly that VIO quality was not measured. An unreadable status file counts as
+a fetch failure. With no status file at all (local runs that fetch separately), the gate
+makes no fetch claim.
+
 ## Pieces
 
 | Step | Command |
 |---|---|
 | Host fingerprint (first step) | `grep 'model name' /proc/cpuinfo`, SIMD flags → `results/host_ci_cpuinfo.txt`, then `python -m vioreg.hostinfo --out results/host_ci.json` |
 | Pull | `docker pull "$(cat docker/IMAGE_REF)"`, then check RepoDigests contains it; `IMAGE` = that ref |
-| Per sequence | fetch `bash scripts/fetch_euroc.sh data/euroc <seq>` (5 GB free guard; 429 retry/backoff) → run `RUNS=<n> bash scripts/run_sequence.sh <seq> results` (serial; verifies the digest) → score `python -m vioreg.score --seqs <seq> --out results --image "$IMAGE"` → `rm` the bag; `df -h /` at each phase |
+| Per sequence | fetch `bash scripts/fetch_euroc.sh data/euroc <seq> --attempts 3 --backoff-s 60 --status-dir results` (5 GB free guard; retries above; exit 75 = unavailable) → run `RUNS=<n> bash scripts/run_sequence.sh <seq> results` (serial; verifies the digest) → score `python -m vioreg.score --seqs <seq> --out results --image "$IMAGE"` → `rm` the bag; `df -h /` at each phase |
 | Gate | `HARNESS_RESULTS=results HARNESS_REQUIRE_RESULTS=1 HARNESS_SEQUENCES=<seqs> pytest -m sequence --junitxml=junit-gate.xml` |
 | Summary | `python -m vioreg.report results --seqs <seqs> --host results/host_ci.json >> $GITHUB_STEP_SUMMARY` |
 
@@ -157,3 +207,7 @@ shellcheck from `shellcheck-py==0.10.0.1` it also lints every `run:` block) and
 - S5b: pull of `docker/IMAGE_REF` with a digest-form check and a RepoDigests check, no `docker build`,
   no `packages:`, login or secrets; a per-sequence loop with fetch → run → score → delete the bag in order,
   `df -h /` at each phase and a `trap` that removes the bag; the default covers every baseline sequence
+- S5c: exactly one schedule (`17 11 * * *`) plus dispatch; scheduled-run env equals the input
+  defaults; job-level `if` on `refs/heads/main` in nightly and publish-image; concurrency
+  without cancel; the fetch call uses `--attempts 3 --backoff-s 60 --status-dir results` and
+  labels exit 75 and other failures "data fetch failed, not a quality result"

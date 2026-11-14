@@ -122,3 +122,18 @@ def test_cli_writes_markdown_and_exits_zero(setup, capsys):
     assert report.main([str(root / "res"), "--seqs", "MH_01_easy", "--thresholds", str(thr),
                         "--root", str(root)]) == 0
     assert "MISSING" in capsys.readouterr().out
+
+
+def test_fetch_failure_says_not_a_quality_result(setup):
+    import json as _j
+    from test_gate import all_results, failed_result, write_fetch_status
+    root, c = setup
+    res = root / "res"
+    rs = all_results()
+    rs["MH_03_medium"] = failed_result("MH_03_medium")
+    write_results(res, rs)
+    write_fetch_status(res, "MH_03_medium", ok=False)
+    md = report.render(res, c, root=root)
+    assert "### MH_03_medium: **DATA FETCH FAILED**" in md
+    assert "data fetch failed, not a quality result" in md
+    assert "DATA FETCH FAILED 1" in md and "QUALITY FAIL" not in md

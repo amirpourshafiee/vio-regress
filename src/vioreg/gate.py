@@ -194,14 +194,18 @@ def emit_warning(msg: str) -> None:
 
 
 # ---------------------------------------------------------------- verdicts + scope (S5a)
-VERDICTS = ("pass", "needs-rebaseline", "quality-fail", "missing", "invalid")
+VERDICTS = ("pass", "needs-rebaseline", "quality-fail", "missing", "invalid", "fetch-failed")
+FETCH_FAILED = "data fetch failed, not a quality result"
 
 
 def classify(fails: list[str]) -> str:
     """One verdict per sequence, so a key mismatch is never reported as a quality failure.
-    Precedence: missing > invalid > needs-rebaseline > quality-fail > pass."""
+    Precedence: fetch-failed > missing > invalid > needs-rebaseline > quality-fail > pass.
+    fetch-failed comes first: with no data, every other failure is a consequence of that."""
     if not fails:
         return "pass"
+    if any(f.startswith(FETCH_FAILED) for f in fails):
+        return "fetch-failed"
     if any(f.startswith(("missing result", "unparsable result", "result is empty")) for f in fails):
         return "missing"
     if any(f.startswith("invalid result") or "not in thresholds" in f for f in fails):
@@ -219,6 +223,26 @@ def parse_scope(text: str | None) -> list[str] | None:
 
 
 # ---------------------------------------------------------------- whole results directory
+def fetch_failure(results_dir: Path, seq: str) -> str | None:
+    """Reason if <results_dir>/<seq>.fetch.json (written by fetch_euroc.sh --status-dir)
+    records a failed fetch, else None. No file = no claim (local runs fetch separately).
+    An unreadable or malformed file counts as a failure: fail closed."""
+    f = Path(results_dir) / f"{seq}.fetch.json"
+    if not f.exists():
+        return None
+    try:
+        st = json.loads(f.read_text())
+        if not isinstance(st, dict) or not isinstance(st.get("ok"), bool):
+            raise ValueError("no boolean 'ok'")
+    except (OSError, ValueError) as e:
+        return f"fetch status {f.name} unreadable ({e})"
+    if st["ok"]:
+        return None
+    kind = {"unavailable": "server unavailable or rate-limited after retries",
+            "error": "fetch error"}.get(st.get("kind"), str(st.get("kind")))
+    return f"{kind}, {st.get('attempts', '?')} attempt(s): {st.get('reason', '')}".rstrip(": ")
+
+
 def load_result(path: Path):
     try:
         return json.loads(Path(path).read_text()), None
@@ -247,6 +271,12 @@ def evaluate_results_dir(results_dir: Path, cfg: dict, require: bool,
         if seq not in cfg.get("sequences", {}):
             rep["sequences"][seq] = [f"{seq} not in thresholds"]
             continue
+        why = fetch_failure(results_dir, seq)
+        if why is not None:
+            rep["sequences"][seq] = [f"{FETCH_FAILED} ({why})"]
+            rep.setdefault("fetch_failed", []).append(seq)
+            results[seq] = None
+            continue
         f = Path(results_dir) / f"{seq}.json"
         if not f.exists():
             if require:
@@ -270,6 +300,9 @@ def evaluate_results_dir(results_dir: Path, cfg: dict, require: bool,
         rep["aggregate_skipped"] = (
             f"ATE geometric mean needs all {len(all_seqs)} baseline sequences; this run covers "
             f"{len(set(seqs) & set(all_seqs))} of {len(all_seqs)} ({' '.join(seqs)})")
+    elif rep.get("fetch_failed"):  # still a failure (never skipped), but say why
+        rep["aggregate"] = [f"not judged: data fetch failed for {' '.join(rep['fetch_failed'])}, "
+                            f"not a quality result"]
     elif not (rep["skipped"] and not require):
         rep["aggregate"] = evaluate_aggregate(results, cfg)
     rep["verdicts"] = {s: classify(f) for s, f in rep["sequences"].items()}

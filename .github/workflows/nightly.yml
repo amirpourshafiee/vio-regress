@@ -1,5 +1,9 @@
 name: nightly-vio
-# Manual only (S5a). A schedule is added in a later session, after a green manual run.
+# Daily at 11:17 UTC (about 3:17 AM Pacific, off the top of the hour, when GitHub's
+# scheduler is busiest), plus manual dispatch. Runs only on main (job-level if), never two at
+# once (concurrency). A scheduled run has no inputs, so env falls back to the input defaults.
+# GitHub disables schedules in a public repo after 60 days without repository activity;
+# re-enable from the Actions tab (docs/ci.md).
 # Pulls the published OpenVINS image pinned by registry digest in docker/IMAGE_REF (never
 # builds it), then per sequence: fetch, run RUNS times (serial replay), score, delete the bag,
 # with df -h at each phase. The gate (src/vioreg/gate.py, docs/gate.md) judges all sequences
@@ -8,6 +12,8 @@ name: nightly-vio
 # is anonymous and the token stays contents:read; a private package fails the pull.
 # The EuRoC dataset is fetched per run and is never cached or uploaded.
 on:
+  schedule:
+    - cron: "17 11 * * *"
   workflow_dispatch:
     inputs:
       sequences:
@@ -28,11 +34,12 @@ concurrency:
 
 jobs:
   vio:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 150
     env:
-      SEQS: ${{ inputs.sequences }}
-      RUNS: ${{ inputs.runs }}
+      SEQS: ${{ inputs.sequences || 'MH_01_easy V1_01_easy MH_03_medium' }}
+      RUNS: ${{ inputs.runs || '2' }}
     steps:
       - name: Host fingerprint (CPU model and SIMD flags)
         run: |
@@ -104,13 +111,22 @@ jobs:
             if [ "$avail" -lt 5000000000 ]; then
               echo "::error::$s: only $((avail / 1000000)) MB free before fetching; need about 5 GB"
               rc=1
-            elif bash scripts/fetch_euroc.sh data/euroc "$s"; then
-              echo "df after fetch ($s):"; df -h /
-              bash scripts/run_sequence.sh "$s" results || rc=1
-              echo "df after run ($s):"; df -h /
             else
-              echo "::error::$s: fetch failed"
-              rc=1
+              # Each request retries 429/5xx/timeouts with backoff; --attempts restarts the whole
+              # sequence (60 s, then 120 s). The status file lets the gate label the outcome.
+              fetch_rc=0
+              bash scripts/fetch_euroc.sh data/euroc "$s" --attempts 3 --backoff-s 60 --status-dir results || fetch_rc=$?
+              if [ "$fetch_rc" -eq 0 ]; then
+                echo "df after fetch ($s):"; df -h /
+                bash scripts/run_sequence.sh "$s" results || rc=1
+                echo "df after run ($s):"; df -h /
+              elif [ "$fetch_rc" -eq 75 ]; then
+                echo "::error::$s: data fetch failed, not a quality result (server unavailable or rate-limited after retries)"
+                rc=1
+              else
+                echo "::error::$s: data fetch failed, not a quality result (fetch error, exit $fetch_rc)"
+                rc=1
+              fi
             fi
             # Always score: a sequence that did not run gets a failed result, not a gap.
             python -m vioreg.score --seqs "$s" --out results --image "$IMAGE" || rc=1
