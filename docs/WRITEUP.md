@@ -12,7 +12,7 @@ results**. Section 9 lists these stages.
 ## 1. What it is and why
 
 vioreg is an open-source regression gate for visual-inertial odometry (VIO), the estimation
-of a camera's 6 degrees of freedom (DoF) pose from images plus an inertial measurement unit.
+of a camera's pose (position and orientation) from images plus an inertial measurement unit.
 It replays sequences from the public EuRoC MAV (European Robotics Challenge, micro aerial
 vehicle) dataset through OpenVINS, an open-source VIO estimator. It scores the output
 trajectory against ground truth and gives a pass or fail verdict for a commit. The gate
@@ -69,8 +69,9 @@ end of an otherwise identical run. There is deliberately no single-sequence ATE 
 
 The ATE implementation was cross-checked against two independent tools on MH_01_easy. It
 matches ov_eval, the evaluation package that ships with OpenVINS, to within 1e-9 m with the
-same alignment and association window. evo has no yaw-only (4-DoF) alignment, so it was
-compared using 6-DoF alignment, where vioreg and evo agree exactly.
+same alignment and association window. evo has no alignment restricted to yaw plus
+translation (4 degrees of freedom, DoF), so it was compared using full 6-DoF alignment,
+where vioreg and evo agree exactly.
 
 <!-- source: docs/crosscheck.md -->
 
@@ -147,8 +148,11 @@ bound.
 ## 5. Fault injection: does the gate catch real input problems?
 
 Faulted **copies** of each bag were made inside the pinned image (the original is mounted
-read-only and its checksum never changed), replayed with 2 serial runs, and judged by the
-real gate with **unchanged** margins. Results kept the baseline key, so every failure is a
+read-only and its checksum never changed) and judged by the real gate with **unchanged**
+margins. Sample size: 15 settings per sequence, 45 in all, each replayed with 2 serial runs.
+imu-noise used one seed (seed 0); the other faults are deterministic rewrites with no seed.
+In all 45 settings the two runs gave bit-identical ATE, so each setting is one sample, not
+two, and no setting was repeated with other seeds. Results kept the baseline key, so every failure is a
 quality verdict. An identity copy (no fault) reproduced the baseline exactly on every
 sequence. The target set before the runs was that the gate catch **at least 3 of the 5**
 planned fault types. **It was not met.** The gate caught 2 of 5, on every sequence.
@@ -156,24 +160,38 @@ planned fault types. **It was not met.** The gate caught 2 of 5, on every sequen
 | Fault | Planned parameter | MH_01_easy | V1_01_easy | MH_03_medium | Signal |
 |---|---|---|---|---|---|
 | drop-frames | keep every 2nd stereo pair | caught | caught | caught | pose count (1371 < 2746 − 4; 1377 < 2757 − 4; 1133 < 2275 − 4) |
-| time-offset | camera stamps shifted by 1 to 200 ms | caught from 40 ms | caught from 100 ms | caught from 100 ms | RPE ratio and ATE geometric mean, after divergence |
+| time-offset | camera stamps shifted by 1, 5, 20, 30, 40, 50, 100, 200 ms | caught at 40 ms and above (threshold between 30 and 40 ms) | caught at 100 ms and above (threshold between 50 and 100 ms) | caught at 100 ms and above (threshold between 50 and 100 ms) | RPE ratio and ATE geometric mean, after divergence |
 | imu-noise | σ_w 0.01 rad/s, σ_a 0.2 m/s² | not caught (RPE 1.070) | not caught (RPE 1.003) | not caught (RPE 1.176) | none |
 | gamma | 2.2 | not caught (RPE 0.983) | not caught (RPE 0.991) | not caught (RPE 1.048) | none |
-| blur | 9 px horizontal | not caught (RPE 1.145) | not caught (RPE 1.010) | not caught (RPE 1.091) | none |
+| blur | 9 px horizontal | not caught (RPE 1.145, see note) | not caught (RPE 1.010) | not caught (RPE 1.091) | none |
 
 <!-- source: docs/faults.md ("Results (MH_01_easy ...)", "Other sequences"), labels/fault_manifest.csv -->
 
-| Sequence | Largest offset absorbed (RPE ratio) | Smallest offset caught |
-|---|---|---|
-| MH_01_easy | 30 ms (1.187) | 40 ms |
-| V1_01_easy | 50 ms (1.010) | 100 ms |
-| MH_03_medium | 50 ms (0.985) | 100 ms |
+Offsets tested on every sequence: 1, 5, 20, 30, 40, 50, 100 and 200 ms. The grid has gaps,
+so each threshold is only known to lie between two tested offsets:
 
-<!-- source: docs/faults.md -->
+| Sequence | Largest tested offset not caught (RPE ratio) | Smallest tested offset caught | Threshold lies |
+|---|---|---|---|
+| MH_01_easy | 30 ms (1.187) | 40 ms | between 30 and 40 ms |
+| V1_01_easy | 50 ms (1.010) | 100 ms | between 50 and 100 ms |
+| MH_03_medium | 50 ms (0.985) | 100 ms | between 50 and 100 ms |
+
+<!-- source: docs/faults.md ("Sample size", MH_01_easy results table, "Other sequences" table) -->
+
+**Note on blur 9 px on MH_01_easy.** Its RPE ratio, 1.145, equals at three decimals the
+largest RPE ratio seen for a legitimate change (1.145, MH_03_medium started 2 s early; section
+4). These are two different measurements that happen to round to the same value. So blur 9
+sits at the edge of normal variation as measured so far, and well below the 1.28 margin.
+Calling it "not caught" is correct for this gate, but it is not evidence that blur 9 does
+nothing to the estimator.
+
+<!-- source: docs/faults.md (blur 9 row), docs/gate.md ("Separation and the chosen margins") -->
 
 Time offsets are not caught gradually. The configuration estimates the camera-to-inertial
-time offset online, which absorbs small offsets. Past a sequence-specific point the
-estimator diverges to kilometres of error. Below that point the gate sees almost nothing.
+time offset online, which absorbs small offsets: on V1_01_easy and MH_03_medium every tested
+offset up to 50 ms was absorbed, and on MH_01_easy every tested offset up to 30 ms. Past a
+sequence-specific point, somewhere in the untested gap, the estimator diverges to kilometres
+of error. Below that point the gate sees almost nothing.
 
 One stronger setting per fault was chosen up front and reported separately. Blur of 25 px
 was caught only on MH_03_medium (RPE 1.410), the sequence with faster motion. Inertial
@@ -201,7 +219,7 @@ keep the gate as it is and document these gaps, rather than tune margins to make
 - **The exact-pose check is still a warning.** A same-key run with different poses does not
   fail the gate. This is deliberate until cross-host behavior is known on more hardware.
 - **Licensing.** The published image contains OpenVINS, which upstream distributes under
-  the GPL-3.0 license. I have not verified the license of everything in the image myself.
+  GPL-3. I have not verified the license of everything in the image myself.
 
 <!-- source: docs/faults.md, docs/gate.md ("Not known yet"), docs/ci.md (GPL-3 note), NEXT.md -->
 

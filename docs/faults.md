@@ -95,6 +95,13 @@ Original bag sha256 values before and after every copy: V1_01_easy `6dc6192f…`
 `c51b0064…`, unchanged. Both **identity controls reproduced the baseline exactly**: RPE and ATE
 ratios 1.000, and poses byte-identical to `baselines/<seq>.tum`.
 
+**Sample size, all three sequences:** 15 settings per sequence (45 in all, one row each in
+`labels/fault_manifest.csv`), 2 serial runs per setting, and one seed (seed 0) for imu-noise.
+The other faults are deterministic rewrites with no seed. In every one of the 45 settings
+the two runs gave bit-identical per-run ATE (`per_run_ate_rmse` in each result JSON,
+re-checked 2026-11-14), so each row is one deterministic sample, not two. Time offsets tested
+on every sequence: 1, 5, 20, 30, 40, 50, 100 and 200 ms.
+
 | fault | parameter | V1_01_easy RPE / ATE ratio | V1 gate (scoped / full) | MH_03_medium RPE / ATE ratio | MH_03 gate (scoped / full) |
 |---|---|---|---|---|---|
 | identity (control) | — | 1.000 / 1.000 | pass / pass | 1.000 / 1.000 | pass / pass |
