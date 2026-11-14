@@ -11,7 +11,7 @@
 #  - ATE: geometric mean over ALL sequences of ate.rmse / baseline ate_rmse
 #    <= ate_geomean_ratio_max (no single-sequence ATE limit)
 #  - same key but different poses than baselines/<seq>.tum = WARNING, not a failure
-# baseline docs/variance/baseline.json; S4 margins (docs/gate.md): RPE 1.28 = geometric midpoint of legit per-sequence max 1.145 and known-bad min 1.431 (x1.118 room each side); ATE geomean 1.5 is a backstop only and does NOT separate (legit max 1.286 vs known-bad min 1.306) (2026-11-14)
+# baseline docs/rebaseline_s5b/baseline.json; S4 margins (docs/gate.md): RPE 1.28 = geometric midpoint of legit per-sequence max 1.145 and known-bad min 1.431 (x1.118 room each side); ATE geomean 1.5 is a backstop only and does NOT separate (legit max 1.286 vs known-bad min 1.306); S5b: S3 baseline re-keyed to the registry digest of docker/IMAGE_REF after pose-equivalent runs (docs/rebaseline_s5b) (2026-11-14)
 version: 2
 defaults:
   align: posyaw
@@ -25,7 +25,7 @@ sequences:
     skip_s: 40
     baselines:
     - vio_commit: 93adc241390d13e99232652cf05cbe18a93c7bea
-      image_digest: sha256:f08eacb146ff87f81849052494ee1e0a41798dc56271276f114b753d4439c308
+      image_digest: sha256:29b31b7a0fccc6ab0cd5e4c4476b1f7786fa7696ddde2fec7d1c8e00ff7e4c05
       config_hash: 5adca0e78514c871ab89438d9293e72d97360064
       ate_rmse: 0.0909188275359106
       rpe_rmse: 0.026387361050835688
@@ -37,7 +37,7 @@ sequences:
     skip_s: 15
     baselines:
     - vio_commit: 93adc241390d13e99232652cf05cbe18a93c7bea
-      image_digest: sha256:f08eacb146ff87f81849052494ee1e0a41798dc56271276f114b753d4439c308
+      image_digest: sha256:29b31b7a0fccc6ab0cd5e4c4476b1f7786fa7696ddde2fec7d1c8e00ff7e4c05
       config_hash: 5adca0e78514c871ab89438d9293e72d97360064
       ate_rmse: 0.09146189234530477
       rpe_rmse: 0.046291329999863885
@@ -49,7 +49,7 @@ sequences:
     skip_s: 0
     baselines:
     - vio_commit: 93adc241390d13e99232652cf05cbe18a93c7bea
-      image_digest: sha256:f08eacb146ff87f81849052494ee1e0a41798dc56271276f114b753d4439c308
+      image_digest: sha256:29b31b7a0fccc6ab0cd5e4c4476b1f7786fa7696ddde2fec7d1c8e00ff7e4c05
       config_hash: 5adca0e78514c871ab89438d9293e72d97360064
       ate_rmse: 0.06340763489615875
       rpe_rmse: 0.04440185823025764
