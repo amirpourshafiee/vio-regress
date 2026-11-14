@@ -10,6 +10,9 @@ things impossible to confuse:
                        against the closest baseline entry and labelled informational.
   * QUALITY FAIL       a hard check, the RPE ratio or the ATE aggregate failed.
   * MISSING            no usable result.
+  * DATA FETCH FAILED  the EuRoC data could not be fetched (HTTP 429/5xx or a dropped
+                       connection after retries, or a fetch error): "data fetch failed, not
+                       a quality result". Still a gate failure (fail closed).
 and reports separately, per sequence:
   (a) pose reproduction: each run vs the baseline trajectory (pose_equivalent), and the runs
       vs each other (determinism on this host);
@@ -26,7 +29,7 @@ from pathlib import Path
 from . import gate
 
 LABEL = {"pass": "PASS", "needs-rebaseline": "NEEDS RE-BASELINE", "quality-fail": "QUALITY FAIL",
-         "missing": "MISSING", "invalid": "INVALID RESULT"}
+         "missing": "MISSING", "invalid": "INVALID RESULT", "fetch-failed": "DATA FETCH FAILED"}
 
 
 def _nearest_entry(cfg: dict, seq: str, result: dict):

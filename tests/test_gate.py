@@ -274,3 +274,80 @@ def test_parse_scope():
 ])
 def test_classify_keeps_rebaseline_apart_from_quality(fails, verdict):
     assert gate.classify(fails) == verdict
+
+
+# ---------------------------------------------------------------- data fetch failure (S5c)
+def write_fetch_status(d, seq, ok, kind="unavailable", reason="HTTP 429 after 5 retries"):
+    import json
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{seq}.fetch.json").write_text(json.dumps(
+        {"sequence": seq, "ok": ok, "kind": kind, "attempts": 3, "reason": reason}))
+
+
+def failed_result(seq):
+    """What score.py writes for a sequence with no runs: ok=false, null metrics."""
+    r = result(seq)
+    r["ate"] = {"ok": False, "rmse": None, "median": None, "max": None, "coverage": None, "n": None}
+    r["rpe"] = {"ok": False, "rmse": None, "delta_s": 1.0}
+    r["runs"], r["per_run_ate_rmse"] = 0, []
+    return r
+
+
+def test_fetch_failure_is_its_own_verdict_and_still_fails(tmp_path):
+    res = tmp_path / "res"
+    rs = all_results()
+    rs["MH_03_medium"] = failed_result("MH_03_medium")
+    write_results(res, rs)
+    write_fetch_status(res, "MH_03_medium", ok=False)
+    rep = gate.evaluate_results_dir(res, cfg(), require=True)
+    fails = rep["sequences"]["MH_03_medium"]
+    assert fails and fails[0].startswith("data fetch failed, not a quality result")
+    assert "HTTP 429" in fails[0]
+    assert rep["verdicts"]["MH_03_medium"] == "fetch-failed"
+    assert rep["verdicts"]["MH_01_easy"] == "pass"
+    assert not rep["passed"], "fail closed: no data is never a pass"
+
+
+def test_fetch_failure_wins_even_without_a_result_file(tmp_path):
+    res = tmp_path / "res"
+    rs = all_results()
+    rs["V1_01_easy"] = None
+    write_results(res, rs)
+    write_fetch_status(res, "V1_01_easy", ok=False, kind="error", reason="integrity check failed")
+    rep = gate.evaluate_results_dir(res, cfg(), require=True)
+    assert rep["verdicts"]["V1_01_easy"] == "fetch-failed"
+
+
+def test_aggregate_names_the_fetch_failure_and_still_fails(tmp_path):
+    res = tmp_path / "res"
+    rs = all_results()
+    rs["MH_03_medium"] = failed_result("MH_03_medium")
+    write_results(res, rs)
+    write_fetch_status(res, "MH_03_medium", ok=False)
+    rep = gate.evaluate_results_dir(res, cfg(), require=True)
+    assert rep["aggregate"] and not rep["aggregate_skipped"]
+    assert rep["aggregate"][0].startswith("not judged: data fetch failed for MH_03_medium, "
+                                          "not a quality result")
+
+
+def test_successful_fetch_status_changes_nothing(tmp_path):
+    res = tmp_path / "res"
+    write_results(res, all_results())
+    for s in ("MH_01_easy", "MH_03_medium", "V1_01_easy"):
+        write_fetch_status(res, s, ok=True, kind="ok", reason="")
+    rep = gate.evaluate_results_dir(res, cfg(), require=True)
+    assert rep["passed"] and set(rep["verdicts"].values()) == {"pass"}
+
+
+@pytest.mark.parametrize("content", ["{not json", '{"ok": "yes"}', "[]"])
+def test_unreadable_fetch_status_fails_closed_as_fetch_failure(tmp_path, content):
+    res = tmp_path / "res"
+    write_results(res, all_results())
+    (res / "MH_01_easy.fetch.json").write_text(content)
+    rep = gate.evaluate_results_dir(res, cfg(), require=True)
+    assert rep["verdicts"]["MH_01_easy"] == "fetch-failed" and not rep["passed"]
+
+
+def test_classify_fetch_failure_has_top_precedence():
+    assert gate.classify(["data fetch failed, not a quality result: x",
+                          "missing result file y", "needs re-baseline: z"]) == "fetch-failed"

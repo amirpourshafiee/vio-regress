@@ -133,3 +133,165 @@ def test_is_complete(tmp_path):
     assert fetch.is_complete(tmp_path / "MH_01_easy")
     (tmp_path / "MH_01_easy" / "MH_01_easy.bag").write_bytes(b"truncated")
     assert not fetch.is_complete(tmp_path / "MH_01_easy")  # size mismatch
+
+
+# ---------------------------------------------------------------- retry / transient failures (S5c)
+import http.client  # noqa: E402
+import urllib.error  # noqa: E402
+
+
+class FakeResponse:
+    def __init__(self, data=b"x", status=206, fail_read=None):
+        self.status, self._data, self.fail_read = status, data, fail_read
+        self.headers = {"Content-Range": f"bytes 0-0/{len(data)}"}
+
+    def read(self, n=-1):
+        if self.fail_read:
+            raise self.fail_read
+        d, self._data = self._data, b""
+        return d
+
+
+def opener_from(events):
+    """Each call pops one event: an exception to raise, or a FakeResponse to return."""
+    calls = []
+
+    def opener(req, timeout):
+        calls.append(req.full_url)
+        ev = events.pop(0)
+        if isinstance(ev, BaseException):
+            raise ev
+        return ev
+    return opener, calls
+
+
+def http_error(code):
+    return urllib.error.HTTPError("https://x", code, "err", {}, None)
+
+
+@pytest.mark.parametrize("transient", [
+    http_error(429), http_error(500), http_error(502), http_error(503), http_error(504),
+    urllib.error.URLError("connection refused"), TimeoutError("timed out"),
+    ConnectionResetError("reset"),
+])
+def test_transport_retries_transient_errors_with_exponential_backoff(transient):
+    opener, calls = opener_from([transient, transient, FakeResponse(b"ab")])
+    slept = []
+    tr = fetch.HttpTransport(retries=5, backoff_s=10.0, opener=opener, sleep=slept.append)
+    assert tr.get("https://x", 0, 1) == b"ab"
+    assert len(calls) == 3 and slept == [10.0, 20.0]
+
+
+def test_transport_gives_up_after_retries_as_unavailable():
+    opener, calls = opener_from([http_error(429)] * 4)
+    slept = []
+    tr = fetch.HttpTransport(retries=3, backoff_s=1.0, opener=opener, sleep=slept.append)
+    with pytest.raises(fetch.FetchUnavailable, match="429"):
+        tr.get("https://x", 0, 0)
+    assert len(calls) == 4 and slept == [1.0, 2.0, 4.0]
+
+
+@pytest.mark.parametrize("code", [403, 404, 416])
+def test_transport_does_not_retry_permanent_http_errors(code):
+    opener, calls = opener_from([http_error(code)])
+    tr = fetch.HttpTransport(retries=5, opener=opener, sleep=lambda s: pytest.fail("slept"))
+    with pytest.raises(fetch.FetchError) as ei:
+        tr.get("https://x", 0, 0)
+    assert not isinstance(ei.value, fetch.FetchUnavailable) and len(calls) == 1
+
+
+@pytest.mark.parametrize("err", [ConnectionResetError("reset"), TimeoutError("t"),
+                                 http.client.IncompleteRead(b"")])
+def test_a_drop_mid_stream_is_unavailable_not_a_crash(err):
+    opener, _ = opener_from([FakeResponse(b"abc", fail_read=err)])
+    tr = fetch.HttpTransport(retries=0, opener=opener, sleep=lambda s: None)
+    with pytest.raises(fetch.FetchUnavailable):
+        list(tr.stream("https://x", 0, 2))
+
+
+class FlakyTransport(MemTransport):
+    """size() is called once by planning (call 1) and once per fetch attempt (calls 2, 3,
+    ...). Raises FetchUnavailable on the call numbers in `fail_on`."""
+
+    def __init__(self, blob, fail_on):
+        super().__init__(blob)
+        self.fail_on, self.sizes = set(fail_on), 0
+
+    def size(self, url):
+        self.sizes += 1
+        if self.sizes in self.fail_on:
+            raise fetch.FetchUnavailable("HTTP 429 after retries")
+        return super().size(url)
+
+
+def run_main(tmp_path, transport, attempts="3", extra=()):
+    slept = []
+    status = tmp_path / "MH_01_easy.fetch.json"
+    rc = fetch.main([str(tmp_path / "data"), "MH_01_easy", "--attempts", attempts,
+                     "--backoff-s", "60", "--status-dir", str(tmp_path), *extra],
+                    transport_factory=lambda: transport, sleep=slept.append)
+    return rc, slept, json.loads(status.read_text())
+
+
+def test_main_retries_the_sequence_with_exponential_backoff_then_succeeds(tmp_path, monkeypatch):
+    monkeypatch.setattr(fetch, "archive_for", lambda s: fetch.Archive("machine_hall", "mem://x", 1, ""))
+    tr = FlakyTransport(make_outer(), fail_on={2, 3})  # fetch attempts 1 and 2 fail
+    rc, slept, st = run_main(tmp_path, tr)
+    assert rc == 0 and slept == [60.0, 120.0]
+    assert st == {"sequence": "MH_01_easy", "ok": True, "kind": "ok", "attempts": 3, "reason": ""}
+    assert (tmp_path / "data" / "MH_01_easy" / "MH_01_easy.bag").read_bytes() == BAG
+
+
+def test_main_exhausted_transient_failure_exits_75_and_says_not_quality(tmp_path, monkeypatch):
+    monkeypatch.setattr(fetch, "archive_for", lambda s: fetch.Archive("machine_hall", "mem://x", 1, ""))
+    rc, slept, st = run_main(tmp_path, FlakyTransport(make_outer(), fail_on={2, 3, 4}))
+    assert rc == fetch.EXIT_UNAVAILABLE == 75
+    assert slept == [60.0, 120.0]
+    assert st["ok"] is False and st["kind"] == "unavailable" and st["attempts"] == 3
+    assert "429" in st["reason"]
+    assert not (tmp_path / "data" / "MH_01_easy" / "MH_01_easy.bag").exists()
+
+
+def test_main_permanent_failure_exits_1_without_retrying(tmp_path, monkeypatch):
+    monkeypatch.setattr(fetch, "archive_for", lambda s: fetch.Archive("machine_hall", "mem://x", 1, ""))
+    blob = bytearray(make_outer())
+    i = blob.find(b"#ROSBAG")
+    blob[i + 100] ^= 0xFF  # corrupt the stored payload -> integrity failure, not transient
+    rc, slept, st = run_main(tmp_path, MemTransport(bytes(blob)))
+    assert rc == 1 and slept == []
+    assert st["ok"] is False and st["kind"] == "error" and st["attempts"] == 1
+
+
+def test_status_file_overwrites_a_stale_failure(tmp_path, monkeypatch):
+    monkeypatch.setattr(fetch, "archive_for", lambda s: fetch.Archive("machine_hall", "mem://x", 1, ""))
+    (tmp_path / "MH_01_easy.fetch.json").write_text('{"ok": false, "kind": "unavailable"}')
+    rc, _, st = run_main(tmp_path, MemTransport(make_outer()))
+    assert rc == 0 and st["ok"] is True
+
+
+def test_main_retries_planning_too(tmp_path, monkeypatch):
+    monkeypatch.setattr(fetch, "archive_for", lambda s: fetch.Archive("machine_hall", "mem://x", 1, ""))
+    rc, slept, st = run_main(tmp_path, FlakyTransport(make_outer(), fail_on={1}))
+    assert rc == 0 and slept == [60.0] and st["ok"] is True and st["attempts"] == 1
+
+
+def test_main_planning_unavailable_after_retries_exits_75(tmp_path, monkeypatch):
+    monkeypatch.setattr(fetch, "archive_for", lambda s: fetch.Archive("machine_hall", "mem://x", 1, ""))
+    rc, slept, st = run_main(tmp_path, FlakyTransport(make_outer(), fail_on={1, 2, 3}))
+    assert rc == 75 and slept == [60.0, 120.0]
+    assert st["ok"] is False and st["kind"] == "unavailable" and st["attempts"] == 3
+
+
+def test_wrapper_script_passes_exit_code_75_through(tmp_path):
+    """scripts/fetch_euroc.sh execs python, so the workflow sees 75, not a generic 1."""
+    import subprocess, sys
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    shim = tmp_path / "python3"
+    shim.write_text("#!/bin/sh\nexit 75\n")
+    shim.chmod(0o755)
+    import os
+    env = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}"}
+    rc = subprocess.run(["bash", str(root / "scripts" / "fetch_euroc.sh"), "x", "MH_01_easy"],
+                        env=env).returncode
+    assert rc == 75
