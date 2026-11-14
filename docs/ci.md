@@ -1,10 +1,15 @@
-# Nightly VIO job on a GitHub-hosted runner (session S5a)
+# Nightly VIO job on a GitHub-hosted runner (sessions S5a, S5b)
 
 `.github/workflows/nightly.yml`, **manual trigger only** (`workflow_dispatch`; inputs
-`sequences`, default `MH_01_easy`, and `runs`, default `2`). There is no schedule yet. It
-builds the pinned image, fetches the sequence, runs it, scores it, judges it with the gate
-(fails closed), writes a job summary, and uploads `results/` plus `junit-gate.xml` (never
-the dataset).
+`sequences`, default `MH_01_easy V1_01_easy MH_03_medium`, and `runs`, default `2`). There
+is no schedule yet. Since S5b it **pulls** the image pinned in `docker/IMAGE_REF` and checks
+its registry digest (S5a built the image instead). Then, for each sequence, it fetches,
+runs, scores and deletes the bag, printing `df -h /` at each phase. It judges all sequences
+with the gate (fails closed), writes a job summary, and uploads `results/` plus
+`junit-gate.xml` (never the dataset).
+
+Sections 1–2 below record the S5a design and its first run. Section 3 is the current S5b
+design.
 
 ## Can a standard runner do it?
 
@@ -35,9 +40,9 @@ Alternative: **push the image to GHCR once and pull it by digest.**
   `contents: read` if the package is public); registry storage; and publishing a
   ~1.6 GB image (OpenVINS is GPL-3, so publishing source and image is fine).
 
-Recommended for S5b; S5a keeps the self-contained build.
+Recommended for S5b; S5a keeps the self-contained build. (Done in S5b: see below.)
 
-## What the first run will most likely say: NEEDS RE-BASELINE
+## S5a: what the first run would say (NEEDS RE-BASELINE)
 
 The baseline key is (vio_commit, image_digest, config_hash). On the runner:
 - `vio_commit` and `config_hash` will match: the same `OV_REF` and the same config files
@@ -57,22 +62,61 @@ summary still answers the cross-machine question, labelled *informational*:
   whether its 2 runs agree with each other;
 - (b) the RPE ratio vs the baseline, with the margin.
 
-**To fix for S5b:** record a store-independent digest (the registry `RepoDigest` after a
-GHCR push, or the config digest from both stores), and pin the base image by digest in
-`docker/Dockerfile.openvins`.
+**Measured (run 43558839448, 2026-11-14, MH_01_easy, 2 runs):** the verdict was
+`[NEEDS-REBASELINE]` as predicted. The result key was `sha256:4eaac9a1` and the baseline
+key `sha256:f08eacb1`. The runner had the same CPU as the baseline host (AMD EPYC 7763,
+4 vCPU, identical SIMD flags), and **both runs reproduced `baselines/MH_01_easy.tum`
+exactly** (RPE and ATE ratio 1.000). Only the key differed.
+
+## S5b: one published image, keyed by its registry digest
+
+- `publish-image.yml` (manual, `packages: write`, the only workflow with it) builds
+  `docker/Dockerfile.openvins` once and pushes it to GHCR. Run 43561755606 published tag
+  `d492d65` (OV_REF `93adc241`).
+- **`docker/IMAGE_REF`** holds that image as one line, `<repo>@sha256:<64 hex>`. nightly
+  requires it to match exactly `^ghcr\.io/amirpourshafiee/vioreg-openvins@sha256:[0-9a-f]{64}$`
+  (one line, no tag, no other repository), pulls it, and fails unless `docker image inspect` RepoDigests lists
+  exactly that ref. It then exports the ref as `IMAGE`. nightly keeps `contents: read`:
+  the package is public, so the pull is anonymous. If the package became private the pull
+  would fail rather than widen the token.
+- **`image_digest` is the registry digest** (`src/vioreg/image_ref.py`). The runner verifies
+  it before any run and writes `run<k>.image_digest`. The scorer records it and fails the
+  result if a run's sidecar differs. A local image ID is never used: it changes on every
+  rebuild (`apt-get update`) and with Docker's storage mode (containerd reports the
+  manifest digest, overlay2 the config digest). See the README.
+- Before pinning, the published image was inspected (`docker history --no-trunc`, plus `/ws`
+  and the home directories listed in a throwaway container). It contains only Ubuntu, ROS
+  Noetic, our apt packages, OpenVINS at `93adc241`, and the upstream config. It has no
+  dataset, credentials or personal paths.
+- **Re-baseline (2026-11-14, Codespace):** 2 serial runs per sequence on the pinned image.
+  Every run was pose-equivalent to `baselines/<seq>.tum` (2767 / 2776 / 2296 poses), and
+  every metric was identical. Following the agreed rule, nothing was re-recorded. The S3
+  baseline was re-keyed to the new digest in `docs/rebaseline_s5b/baseline.json`, which
+  includes the evidence. Thresholds were regenerated with the margins unchanged. Their diff
+  is only the three `image_digest` lines and the provenance comment. The gate on those runs:
+  PASS 3, including the ATE geomean.
+
+Disk on the runner: the pull is about 1.55 GB compressed and 7.8 GB unpacked. Each
+sequence then peaks at about 3 GB while fetching (bag 2.5–2.7 GB, after a 1.6 GB temp
+zip that is deleted first). Deleting each bag before the next fetch keeps the peak at one
+bag. The loop also refuses to fetch below 5 GB free.
+
+**Changing the image** means a new publish, a new `docker/IMAGE_REF`, and a deliberate
+re-baseline. If the new image reproduces the baseline poses, re-key as above. If it does
+not, re-record the baseline and review the margins.
 
 ## Pieces
 
 | Step | Command |
 |---|---|
 | Host fingerprint (first step) | `grep 'model name' /proc/cpuinfo`, SIMD flags → `results/host_ci_cpuinfo.txt`, then `python -m vioreg.hostinfo --out results/host_ci.json` |
-| Fetch | `bash scripts/fetch_euroc.sh data/euroc <seqs>` (5 GB size guard; 429 retry/backoff) |
-| Run | `RUNS=<n> bash scripts/run_sequence.sh <seq> results` (serial replay) |
-| Score | `python -m vioreg.score --seqs <seqs> --out results --image vioreg-openvins:v2.7` |
+| Pull | `docker pull "$(cat docker/IMAGE_REF)"`, then check RepoDigests contains it; `IMAGE` = that ref |
+| Per sequence | fetch `bash scripts/fetch_euroc.sh data/euroc <seq>` (5 GB free guard; 429 retry/backoff) → run `RUNS=<n> bash scripts/run_sequence.sh <seq> results` (serial; verifies the digest) → score `python -m vioreg.score --seqs <seq> --out results --image "$IMAGE"` → `rm` the bag; `df -h /` at each phase |
 | Gate | `HARNESS_RESULTS=results HARNESS_REQUIRE_RESULTS=1 HARNESS_SEQUENCES=<seqs> pytest -m sequence --junitxml=junit-gate.xml` |
 | Summary | `python -m vioreg.report results --seqs <seqs> --host results/host_ci.json >> $GITHUB_STEP_SUMMARY` |
 
-A one-sequence run is judged with `HARNESS_SEQUENCES`. The per-sequence checks run; the ATE
+The default covers all three baseline sequences, so the ATE geometric mean is judged. A
+one-sequence run is judged with `HARNESS_SEQUENCES`. The per-sequence checks run; the ATE
 geometric mean is defined over all baseline sequences, so it is **skipped with its reason**
 rather than turned into a single-sequence ATE gate. Inputs reach the shell only through
 `env` and are validated (sequence-name regex, `runs` 1–9) before use.
@@ -90,3 +134,6 @@ shellcheck from `shellcheck-py==0.10.0.1` it also lints every `run:` block) and
 - judging steps run after a VIO failure
 - the upload is unconditional and never includes `data/`
 - no `${{ inputs }}` in `run:` blocks
+- S5b: pull of `docker/IMAGE_REF` with a digest-form check and a RepoDigests check, no `docker build`,
+  no `packages:`, login or secrets; a per-sequence loop with fetch → run → score → delete the bag in order,
+  `df -h /` at each phase and a `trap` that removes the bag; the default covers every baseline sequence

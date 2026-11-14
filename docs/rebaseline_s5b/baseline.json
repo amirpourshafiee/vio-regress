@@ -1,0 +1,267 @@
+{
+  "variant": "A_serial",
+  "sequences": {
+    "V1_01_easy": {
+      "vio_commit": "93adc241390d13e99232652cf05cbe18a93c7bea",
+      "image_digest": "sha256:29b31b7a0fccc6ab0cd5e4c4476b1f7786fa7696ddde2fec7d1c8e00ff7e4c05",
+      "harness_commit": "04fdb3c062bf00031f0cca221f0e69cdb2ef0bcc",
+      "config_hash": "5adca0e78514c871ab89438d9293e72d97360064",
+      "align": "posyaw",
+      "skip_s": 0.0,
+      "runs": 10,
+      "per_run_ate_rmse": [
+        0.06340763489615875,
+        0.06340763489615875,
+        0.06340763489615875,
+        0.06340763489615875,
+        0.06340763489615875,
+        0.06340763489615875,
+        0.06340763489615875,
+        0.06340763489615875,
+        0.06340763489615875,
+        0.06340763489615875
+      ],
+      "per_run_rpe_rmse": [
+        0.04440185823025764,
+        0.04440185823025764,
+        0.04440185823025764,
+        0.04440185823025764,
+        0.04440185823025764,
+        0.04440185823025764,
+        0.04440185823025764,
+        0.04440185823025764,
+        0.04440185823025764,
+        0.04440185823025764
+      ],
+      "per_run_ok": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "per_run_coverage": [
+        0.9679217023654207,
+        0.9679217023654207,
+        0.9679217023654207,
+        0.9679217023654207,
+        0.9679217023654207,
+        0.9679217023654207,
+        0.9679217023654207,
+        0.9679217023654207,
+        0.9679217023654207,
+        0.9679217023654207
+      ],
+      "per_run_n": [
+        2757,
+        2757,
+        2757,
+        2757,
+        2757,
+        2757,
+        2757,
+        2757,
+        2757,
+        2757
+      ]
+    },
+    "MH_01_easy": {
+      "vio_commit": "93adc241390d13e99232652cf05cbe18a93c7bea",
+      "image_digest": "sha256:29b31b7a0fccc6ab0cd5e4c4476b1f7786fa7696ddde2fec7d1c8e00ff7e4c05",
+      "harness_commit": "04fdb3c062bf00031f0cca221f0e69cdb2ef0bcc",
+      "config_hash": "5adca0e78514c871ab89438d9293e72d97360064",
+      "align": "posyaw",
+      "skip_s": 40.0,
+      "runs": 10,
+      "per_run_ate_rmse": [
+        0.0909188275359106,
+        0.0909188275359106,
+        0.0909188275359106,
+        0.0909188275359106,
+        0.0909188275359106,
+        0.0909188275359106,
+        0.0909188275359106,
+        0.0909188275359106,
+        0.0909188275359106,
+        0.0909188275359106
+      ],
+      "per_run_rpe_rmse": [
+        0.026387361050835688,
+        0.026387361050835688,
+        0.026387361050835688,
+        0.026387361050835688,
+        0.026387361050835688,
+        0.026387361050835688,
+        0.026387361050835688,
+        0.026387361050835688,
+        0.026387361050835688,
+        0.026387361050835688
+      ],
+      "per_run_ok": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "per_run_coverage": [
+        0.972833939738331,
+        0.972833939738331,
+        0.972833939738331,
+        0.972833939738331,
+        0.972833939738331,
+        0.972833939738331,
+        0.972833939738331,
+        0.972833939738331,
+        0.972833939738331,
+        0.972833939738331
+      ],
+      "per_run_n": [
+        2746,
+        2746,
+        2746,
+        2746,
+        2746,
+        2746,
+        2746,
+        2746,
+        2746,
+        2746
+      ]
+    },
+    "MH_03_medium": {
+      "vio_commit": "93adc241390d13e99232652cf05cbe18a93c7bea",
+      "image_digest": "sha256:29b31b7a0fccc6ab0cd5e4c4476b1f7786fa7696ddde2fec7d1c8e00ff7e4c05",
+      "harness_commit": "04fdb3c062bf00031f0cca221f0e69cdb2ef0bcc",
+      "config_hash": "5adca0e78514c871ab89438d9293e72d97360064",
+      "align": "posyaw",
+      "skip_s": 15.0,
+      "runs": 10,
+      "per_run_ate_rmse": [
+        0.09146189234530477,
+        0.09146189234530477,
+        0.09146189234530477,
+        0.09146189234530477,
+        0.09146189234530477,
+        0.09146189234530477,
+        0.09146189234530477,
+        0.09146189234530477,
+        0.09146189234530477,
+        0.09146189234530477
+      ],
+      "per_run_rpe_rmse": [
+        0.046291329999863885,
+        0.046291329999863885,
+        0.046291329999863885,
+        0.046291329999863885,
+        0.046291329999863885,
+        0.046291329999863885,
+        0.046291329999863885,
+        0.046291329999863885,
+        0.046291329999863885,
+        0.046291329999863885
+      ],
+      "per_run_ok": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "per_run_coverage": [
+        0.9793571073141273,
+        0.9793571073141273,
+        0.9793571073141273,
+        0.9793571073141273,
+        0.9793571073141273,
+        0.9793571073141273,
+        0.9793571073141273,
+        0.9793571073141273,
+        0.9793571073141273,
+        0.9793571073141273
+      ],
+      "per_run_n": [
+        2275,
+        2275,
+        2275,
+        2275,
+        2275,
+        2275,
+        2275,
+        2275,
+        2275,
+        2275
+      ]
+    }
+  },
+  "rekey": {
+    "from_image_digest": "sha256:f08eacb146ff87f81849052494ee1e0a41798dc56271276f114b753d4439c308",
+    "to_image_digest": "sha256:29b31b7a0fccc6ab0cd5e4c4476b1f7786fa7696ddde2fec7d1c8e00ff7e4c05",
+    "image_ref": "ghcr.io/amirpourshafiee/vioreg-openvins@sha256:29b31b7a0fccc6ab0cd5e4c4476b1f7786fa7696ddde2fec7d1c8e00ff7e4c05",
+    "date": "2026-11-14",
+    "why": "S5b: image identity is the registry digest of the published image. The S3 baseline (10 serial runs per sequence, old local image) is kept; only image_digest is re-keyed, because 2 serial runs per sequence on the pinned image were pose-equivalent to baselines/<seq>.tum (evidence below). No metric is re-recorded.",
+    "evidence_results": "results/s5b_pinned (gitignored)",
+    "evidence": {
+      "V1_01_easy": {
+        "runs": 2,
+        "poses": 2776,
+        "pose_equivalent_to_baseline": [
+          true,
+          true
+        ],
+        "distinct_trajectories": 1,
+        "ate_rmse": 0.06340763489615875,
+        "rpe_rmse": 0.04440185823025764,
+        "coverage": 0.9679217023654207,
+        "n": 2757,
+        "harness_commit": "9a1547819ea657ff8b1c00f2987a8b5723d7df34",
+        "baseline_tum_sha1": "8560e375940eb75fa1edfcb5fc02be21e183ad65"
+      },
+      "MH_01_easy": {
+        "runs": 2,
+        "poses": 2767,
+        "pose_equivalent_to_baseline": [
+          true,
+          true
+        ],
+        "distinct_trajectories": 1,
+        "ate_rmse": 0.0909188275359106,
+        "rpe_rmse": 0.026387361050835688,
+        "coverage": 0.972833939738331,
+        "n": 2746,
+        "harness_commit": "9a1547819ea657ff8b1c00f2987a8b5723d7df34",
+        "baseline_tum_sha1": "88e96c4f980fe30eafa8e62bb949a35994561859"
+      },
+      "MH_03_medium": {
+        "runs": 2,
+        "poses": 2296,
+        "pose_equivalent_to_baseline": [
+          true,
+          true
+        ],
+        "distinct_trajectories": 1,
+        "ate_rmse": 0.09146189234530477,
+        "rpe_rmse": 0.046291329999863885,
+        "coverage": 0.9793571073141273,
+        "n": 2275,
+        "harness_commit": "9a1547819ea657ff8b1c00f2987a8b5723d7df34",
+        "baseline_tum_sha1": "7e462fadf5c8b16e9deaf1cf00119f39fbfe98e9"
+      }
+    }
+  }
+}

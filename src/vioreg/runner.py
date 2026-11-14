@@ -2,12 +2,17 @@
 
     scripts/run_sequence.sh <SEQ> <OUT_ROOT>        (env: RUNS, MODE, CPUS, CONFIG_DIR, IMAGE, DATA)
 
+The image is the pinned ref in docker/IMAGE_REF (<repo>@sha256:...; $IMAGE or --image
+override it, same form required). Before any run, `docker image inspect` must confirm that
+the local image carries exactly that registry digest; otherwise exit 1 and nothing runs.
+
 Each run k (numbered after the highest existing run<k>.tum) writes into <OUT_ROOT>/<SEQ>/:
   run<k>.ov.txt       raw OpenVINS output (ov_eval pose_to_file, 20 columns)
   run<k>.tum          strict 8-column TUM, quaternions renormalised, xyzw
   run<k>.wall_s       wall-clock seconds of the whole `docker run` (container start to exit),
                       measured with time.monotonic() identically for every run and mode
   run<k>.config_hash  hash of the config the run actually used (image or CONFIG_DIR)
+  run<k>.image_digest registry digest of the image the run used (verified before the runs)
   run<k>.log          container stdout/stderr
   run<k>.cmd          the exact docker command
 
@@ -39,6 +44,7 @@ from pathlib import Path
 import numpy as np
 
 from . import config_hash as ch
+from . import image_ref as ir
 from .euroc_io import Trajectory, load_tum, save_tum
 
 # From the bag_start comment in ov_msckf/launch/serial.launch at the pinned commit:
@@ -72,6 +78,7 @@ class RunConfig:
     out_root: Path
     data_root: Path
     image: str
+    image_digest: str
     config_hash: str
     uid: int
     gid: int
@@ -143,6 +150,7 @@ def run_once(c: RunConfig, execute=_execute) -> RunResult:
     cmd = docker_cmd(c, k)
     tum.write_text("")  # claim the slot first: a crash below leaves a failed run, not a gap
     (seq_dir / f"run{k}.config_hash").write_text(c.config_hash + "\n")
+    (seq_dir / f"run{k}.image_digest").write_text(c.image_digest + "\n")
     (seq_dir / f"run{k}.cmd").write_text(" ".join(cmd) + "\n")
     started = time.time() - 1.0  # 1 s slack for filesystem timestamp granularity
     t0 = time.monotonic()
@@ -176,7 +184,8 @@ def main(argv=None) -> int:
     ap.add_argument("--cpus", default=os.environ.get("CPUS") or None)
     ap.add_argument("--config-dir", type=Path,
                     default=Path(os.environ["CONFIG_DIR"]) if os.environ.get("CONFIG_DIR") else None)
-    ap.add_argument("--image", default=os.environ.get("IMAGE", "vioreg-openvins:v2.7"))
+    ap.add_argument("--image", default=None,
+                    help="digest-pinned ref (default: $IMAGE, else docker/IMAGE_REF)")
     ap.add_argument("--data", type=Path, default=Path(os.environ.get("DATA", "data/euroc")))
     ap.add_argument("--bag-start", type=float,
                     default=float(os.environ["BAG_START"]) if os.environ.get("BAG_START") else None)
@@ -184,6 +193,12 @@ def main(argv=None) -> int:
                     default=float(os.environ["BAG_RATE"]) if os.environ.get("BAG_RATE") else None)
     a = ap.parse_args(argv)
 
+    try:
+        a.image = a.image or ir.pinned_ref()
+        digest = ir.verify_image(a.image)
+    except ir.ImageRefError as e:
+        print(f"run_sequence: FAIL: image: {e}", file=sys.stderr)
+        return 1
     bag = a.data / a.seq / f"{a.seq}.bag"
     if not bag.is_file():
         print(f"run_sequence: FAIL: {bag} missing (scripts/fetch_euroc.sh)", file=sys.stderr)
@@ -196,11 +211,11 @@ def main(argv=None) -> int:
         print(f"run_sequence: FAIL: config hash: {e}", file=sys.stderr)
         return 1
     c = RunConfig(seq=a.seq, out_root=a.out_root, data_root=a.data, image=a.image,
-                  config_hash=chash, uid=os.getuid(), gid=os.getgid(), mode=a.mode,
+                  image_digest=digest, config_hash=chash, uid=os.getuid(), gid=os.getgid(), mode=a.mode,
                   cpus=a.cpus, config_dir=a.config_dir, bag_start_s=a.bag_start,
                   bag_rate=a.bag_rate)
     print(f"run_sequence: {a.seq} x{a.runs} mode={a.mode} cpus={a.cpus or 'unlimited'} "
-          f"config={a.config_dir or 'image'} ({chash[:12]}) "
+          f"image={digest[:19]} config={a.config_dir or 'image'} ({chash[:12]}) "
           f"bag_start={a.bag_start if a.bag_start is not None else bag_start(a.seq)} "
           f"bag_rate={a.bag_rate or '-'}", flush=True)
     fails = 0

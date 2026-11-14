@@ -34,7 +34,10 @@ def test_manual_trigger_only_no_schedule(wf):
 
 def test_inputs_and_defaults(wf):
     inp = triggers(wf)["workflow_dispatch"]["inputs"]
-    assert inp["sequences"]["default"] == "MH_01_easy"
+    assert inp["sequences"]["default"].split() == ["MH_01_easy", "V1_01_easy", "MH_03_medium"]
+    thr = yaml.safe_load((ROOT / "configs" / "thresholds.yaml").read_text())
+    assert set(inp["sequences"]["default"].split()) == set(thr["sequences"]), \
+        "default must cover every baseline sequence (the ATE geomean needs all of them)"
     assert str(inp["runs"]["default"]) == "2"
 
 
@@ -199,3 +202,56 @@ def test_dockerfile_source_label_points_at_this_repo():
     text = (ROOT / "docker" / "Dockerfile.openvins").read_text()
     m = re.search(r'org\.opencontainers\.image\.source="([^"]+)"', text)
     assert m and m.group(1) == REPO_URL
+
+
+# ---------------------------------------------------------------- S5b phase 2: pinned image
+def _step_with(wf, needle):
+    found = [s for s in steps(wf) if needle in s.get("run", "")]
+    assert len(found) == 1, f"expected one step running {needle!r}, found {len(found)}"
+    return found[0]
+
+
+def test_nightly_pulls_the_pinned_ref_and_never_builds(wf):
+    text = WF.read_text()
+    assert "docker build" not in text and "Dockerfile" not in text
+    run = _step_with(wf, "docker pull")["run"]
+    assert "docker/IMAGE_REF" in run
+    assert "@sha256:[0-9a-f]{64}" in run, "the ref must be validated as digest-pinned"
+    assert "RepoDigests" in run, "the pulled digest must be checked against the pinned one"
+    assert "GITHUB_ENV" in run and "IMAGE=" in run
+    (job,) = wf["jobs"].values()
+    assert "IMAGE" not in job.get("env", {}), "IMAGE comes only from docker/IMAGE_REF"
+
+
+def test_nightly_needs_no_package_permission(wf):
+    text = WF.read_text()
+    assert "packages:" not in text and "docker login" not in text
+    assert "secrets." not in text
+
+
+def test_nightly_loops_per_sequence_fetch_run_score_delete(wf):
+    run = _step_with(wf, "scripts/run_sequence.sh")["run"]
+    order = ["scripts/fetch_euroc.sh", "scripts/run_sequence.sh", "-m vioreg.score", "rm -f"]
+    pos = [run.find(x) for x in order[:-1]] + [run.rfind(order[-1])]  # last rm, not the trap
+    assert all(p >= 0 for p in pos) and pos == sorted(pos), dict(zip(order, pos))
+    assert 'for s in "${seq_list[@]}"' in run
+    assert run.count("df -h /") >= 4, "df -h at each phase"
+    assert "trap" in run, "the bag is deleted even if a phase fails"
+    assert '.bag' in run
+    assert "rc=1" in run and "exit $rc" in run, "a failed phase fails the step after the loop"
+
+
+def test_nightly_score_uses_the_pulled_image(wf):
+    run = _step_with(wf, "scripts/run_sequence.sh")["run"]
+    assert '--image "$IMAGE"' in run
+
+
+def test_image_ref_validated_against_exactly_this_repo(wf):
+    """docker/IMAGE_REF must match exactly one repository and a full digest, nothing else."""
+    run = _step_with(wf, "docker pull")["run"]
+    assert "re='^ghcr\\.io/amirpourshafiee/vioreg-openvins@sha256:[0-9a-f]{64}$'" in run
+    assert '[[ "$ref" =~ $re ]]' in run
+    assert run.index('=~ $re') < run.index("docker pull"), "validate before any use"
+    # and the committed file passes that exact pattern
+    ref = (ROOT / "docker" / "IMAGE_REF").read_text()
+    assert re.fullmatch(r"ghcr\.io/amirpourshafiee/vioreg-openvins@sha256:[0-9a-f]{64}\n", ref)

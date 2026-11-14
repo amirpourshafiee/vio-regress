@@ -11,6 +11,7 @@ tests/golden_results/variants/    two bundles of REAL sweep results re-keyed to 
 import json
 import shutil
 from pathlib import Path
+import pytest
 
 import yaml
 
@@ -87,3 +88,24 @@ def test_committed_margins_match_the_measured_separation():
     m = CFG["margins"]
     assert 1.145 < m["rpe_ratio_max"] < 1.431
     assert 1.286 < m["ate_geomean_ratio_max"] < 2.038  # backstop: above legit, below 2 of 3 bad
+
+
+# ---------------------------------------------------------------- S5b re-key labelling
+OLD_IMAGE = "sha256:f08eacb146ff87f81849052494ee1e0a41798dc56271276f114b753d4439c308"
+
+
+@pytest.mark.parametrize("name", ["legit_fast_threshold_18", "known_bad_num_pts_50"])
+def test_variant_goldens_say_honestly_they_were_rekeyed_not_rerun(name):
+    """The variants were produced on the earlier local image and only re-keyed in S5b.
+    real_key must keep the key they were really produced under, and the block must say so."""
+    import yaml
+    src = json.loads((GOLD / "variants" / f"{name}.json").read_text())["source"]
+    thr = yaml.safe_load((Path(__file__).resolve().parents[1] / "configs" / "thresholds.yaml").read_text())
+    for seq, key in src["real_key"].items():
+        assert key["image_digest"] == OLD_IMAGE, f"{seq}: real_key must record the image it ran on"
+    rk = src["rekey"]
+    assert rk["produced_on_image_digest"] == OLD_IMAGE
+    assert rk["rerun_on_pinned_image"] is False
+    assert {rk["rekeyed_to_image_digest"]} == {
+        b["image_digest"] for s in thr["sequences"].values() for b in s["baselines"]}
+    assert "not re-run" in rk["note"]

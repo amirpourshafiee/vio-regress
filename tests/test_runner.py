@@ -40,7 +40,8 @@ def test_next_run_index_skips_past_every_run_artifact(tmp_path):
 
 def cfg(tmp_path, **kw):
     base = dict(seq="MH_01_easy", out_root=tmp_path / "results", data_root=tmp_path / "data",
-                image="img:tag", config_hash="f" * 40, uid=1000, gid=1000)
+                image="img@sha256:" + "c" * 64, image_digest="sha256:" + "c" * 64,
+                config_hash="f" * 40, uid=1000, gid=1000)
     base.update(kw)
     return runner.RunConfig(**base)
 
@@ -51,7 +52,7 @@ def test_serial_command(tmp_path):
     assert cmd[:3] == ["docker", "run", "--rm"]
     assert "--cpus" not in cmd
     assert f"{tmp_path / 'data' / 'MH_01_easy'}:/data:ro" in cmd
-    i = cmd.index("img:tag")
+    i = cmd.index("img@sha256:" + "c" * 64)  # docker runs the digest-pinned ref
     assert cmd[i + 1:i + 3] == ["roslaunch", "ov_msckf"] and cmd[i + 3] == "serial.launch"
     args = cmd[i + 4:]
     for a in ("config:=euroc_mav", "bag:=/data/MH_01_easy.bag", "bag_start:=40.0",
@@ -68,7 +69,7 @@ def test_cpus_and_config_mount(tmp_path):
 
 def test_realtime_command_uses_subscribe_with_bag_playback(tmp_path):
     cmd = runner.docker_cmd(cfg(tmp_path, mode="realtime"), 1)
-    i = cmd.index("img:tag")
+    i = cmd.index("img@sha256:" + "c" * 64)  # docker runs the digest-pinned ref
     assert cmd[i + 3] == "subscribe.launch"
     assert "dobag:=true" in cmd and "bag_rate:=1" in cmd and "bag_start:=40.0" in cmd
 
@@ -99,6 +100,7 @@ def test_run_once_writes_tum_and_sidecars(tmp_path):
     assert (d / "run1.tum").read_text().splitlines()[0].count(" ") == 7  # 8 columns
     assert float((d / "run1.wall_s").read_text()) >= 0.0
     assert (d / "run1.config_hash").read_text().strip() == "f" * 40
+    assert (d / "run1.image_digest").read_text().strip() == "sha256:" + "c" * 64
     assert (d / "run1.log").exists() and (d / "run1.ov.txt").exists()
     assert runner.run_once(c, execute=fake_exec(ov_rows())).k == 2
 
@@ -173,3 +175,43 @@ def test_bag_start_and_rate_overrides(tmp_path):
         runner.docker_cmd(cfg(tmp_path, bag_rate=2.0), 1)  # rate exists only for realtime
     with pytest.raises(ValueError):
         runner.docker_cmd(cfg(tmp_path, bag_start_s=-1.0), 1)
+
+
+# ---------------------------------------------------------------- image pin (S5b)
+def _bag(tmp_path):
+    bag = tmp_path / "data" / "MH_01_easy" / "MH_01_easy.bag"
+    bag.parent.mkdir(parents=True)
+    bag.write_bytes(b"x")
+    return ["MH_01_easy", str(tmp_path / "results"), "--data", str(tmp_path / "data"), "--runs", "1"]
+
+
+def test_main_fails_before_any_run_if_image_digest_is_not_the_pinned_one(tmp_path, monkeypatch):
+    from vioreg import image_ref as ir
+
+    def bad(ref, inspect=None):
+        raise ir.ImageRefError("pulled image digest is not the pinned one")
+    monkeypatch.setattr(runner.ir, "verify_image", bad)
+    monkeypatch.setattr(runner, "run_once", lambda c: pytest.fail("ran despite a bad image"))
+    assert runner.main(_bag(tmp_path)) == 1
+    assert not (tmp_path / "results").exists()
+
+
+def test_main_fails_on_a_non_digest_image_ref(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "run_once", lambda c: pytest.fail("ran despite a tag ref"))
+    assert runner.main([*_bag(tmp_path), "--image", "vioreg-openvins:v2.7"]) == 1
+
+
+def test_main_defaults_to_pinned_ref_and_passes_the_verified_digest(tmp_path, monkeypatch):
+    from vioreg import image_ref as ir
+    monkeypatch.delenv("IMAGE", raising=False)
+    pinned = ir.pinned_ref(env={})
+    seen = {}
+    monkeypatch.setattr(runner.ir, "verify_image",
+                        lambda ref, inspect=None: seen.setdefault("ref", ref) and "sha256:" + "a" * 64)
+    monkeypatch.setattr(runner.ch, "image_reader", lambda image, name: (lambda f: b""))
+    monkeypatch.setattr(runner.ch, "config_hash", lambda read: "f" * 40)
+    monkeypatch.setattr(runner, "run_once",
+                        lambda c: seen.update(cfg=c) or runner.RunResult(k=1, ok=True, wall_s=0.0))
+    assert runner.main(_bag(tmp_path)) == 0
+    assert seen["ref"] == pinned and seen["cfg"].image == pinned
+    assert seen["cfg"].image_digest == "sha256:" + "a" * 64

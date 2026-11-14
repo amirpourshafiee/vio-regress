@@ -26,7 +26,12 @@ Aggregation across runs (VIO is not bit-deterministic, so a sequence may have N 
 
 Provenance:
   vio_commit     label vioreg.ov_ref of the Docker image (== /ws/OV_COMMIT, built in)
-  image_digest   the image ID from `docker image inspect` (sha256:...)
+  image_digest   the REGISTRY digest of the pinned image (vioreg/image_ref.py): --image must be
+                 <repo>@sha256:<64 hex> (default $IMAGE, else docker/IMAGE_REF), and
+                 `docker image inspect` RepoDigests must list it. Never the local image ID,
+                 which changes per rebuild and per Docker storage mode. Unconfirmed -> None
+                 -> the result fails closed. Every run<k>.image_digest sidecar written by
+                 the runner must equal it, like config_hash.
   harness_commit `git rev-parse HEAD`, with "-dirty" appended if src/, configs/ or
                  scripts/ have any uncommitted change, untracked files included
   config_hash    sha1 over estimator_config.yaml + the kalibr IMU and IMU-camera yamls it
@@ -49,6 +54,7 @@ from pathlib import Path
 import numpy as np
 
 from . import config_hash as ch
+from . import image_ref as ir
 from .euroc_io import load_euroc_gt, load_tum
 from .metrics import ate, rpe
 
@@ -75,8 +81,12 @@ def collect_provenance(image: str, config_name: str, repo: Path = ROOT,
     """Each field is None if it cannot be determined; the scorer then fails closed."""
     prov: dict = {"backend": BACKEND, **{k: None for k in PROVENANCE_KEYS}}
     try:
-        info = json.loads(_run(["docker", "image", "inspect", image]))[0]
-        prov["image_digest"] = info["Id"]
+        info = ir.docker_inspect(image)
+        prov["image_digest"] = ir.registry_digest(image, info.get("RepoDigests"))
+        if prov["image_digest"] is None:
+            print(f"score: {image} is not a digest-pinned ref confirmed by docker "
+                  f"(RepoDigests {info.get('RepoDigests')}); image_digest unknown",
+                  file=sys.stderr)
         ref = (info.get("Config", {}).get("Labels") or {}).get("vioreg.ov_ref")
         prov["vio_commit"] = ref if ref and re.fullmatch(r"[0-9a-f]{40}", ref) else None
     except Exception as e:  # noqa: BLE001 - any failure means "unknown", never a guess
@@ -174,6 +184,10 @@ def score_sequence(seq: str, results: Path, gt_csv: Path, provenance: dict,
         if not provenance.get(k):
             reasons.append(f"provenance field {k} missing")
     for k, _ in runs:
+        side = seq_dir / f"run{k}.image_digest"
+        if side.exists() and side.read_text().strip() != provenance.get("image_digest"):
+            reasons.append(f"run{k} used image {side.read_text().strip()[:19]}, "
+                           f"not the recorded {str(provenance.get('image_digest'))[:19]}")
         side = seq_dir / f"run{k}.config_hash"
         if side.exists() and side.read_text().strip() != provenance.get("config_hash"):
             reasons.append(f"run{k} used config {side.read_text().strip()[:12]}, "
@@ -224,12 +238,18 @@ def main(argv=None) -> int:
     ap.add_argument("--out", default="results", help="results root (holds <seq>/run*.tum)")
     ap.add_argument("--data", default="data/euroc", help="EuRoC root from fetch_euroc.sh")
     ap.add_argument("--thresholds", default=str(ROOT / "configs" / "thresholds.yaml"))
-    ap.add_argument("--image", default="vioreg-openvins:v2.7")
+    ap.add_argument("--image", default=None,
+                    help="digest-pinned ref (default: $IMAGE, else docker/IMAGE_REF)")
     ap.add_argument("--config-name", default="euroc_mav")
     ap.add_argument("--config-dir", type=Path, default=None,
                     help="hash this local config dir (the one the runs mounted) "
                          "instead of the config baked into the image")
     a = ap.parse_args(argv)
+    try:
+        a.image = a.image or ir.pinned_ref()
+    except ir.ImageRefError as e:
+        print(f"score: {e}", file=sys.stderr)  # provenance then records image_digest None
+        a.image = a.image or ""
 
     cfg = yaml.safe_load(Path(a.thresholds).read_text())
     prov = collect_provenance(image=a.image, config_name=a.config_name,
