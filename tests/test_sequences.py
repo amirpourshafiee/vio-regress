@@ -21,26 +21,29 @@ ROOT = Path(__file__).resolve().parents[1]
 RESULTS = Path(os.environ.get("HARNESS_RESULTS", ROOT / "results"))
 CFG = yaml.safe_load((ROOT / "configs" / "thresholds.yaml").read_text())
 REQUIRE = os.environ.get("HARNESS_REQUIRE_RESULTS") == "1"
+SCOPE = gate.parse_scope(os.environ.get("HARNESS_SEQUENCES"))  # e.g. the one-sequence nightly
 
 
 @lru_cache(maxsize=1)
 def report():
-    return gate.evaluate_results_dir(RESULTS, CFG, require=REQUIRE, root=ROOT)
+    return gate.evaluate_results_dir(RESULTS, CFG, require=REQUIRE, root=ROOT, scope=SCOPE)
 
 
 @pytest.mark.sequence
-@pytest.mark.parametrize("seq", sorted(CFG["sequences"]))
+@pytest.mark.parametrize("seq", SCOPE if SCOPE is not None else sorted(CFG["sequences"]))
 def test_sequence_within_gate(seq):
     rep = report()
     if seq in rep["skipped"]:
         pytest.skip(f"no result for {seq} (HARNESS_REQUIRE_RESULTS is not 1)")
     fails = rep["sequences"][seq]
-    assert not fails, f"{seq}: " + "; ".join(fails)
+    assert not fails, f"{seq} [{rep['verdicts'][seq].upper()}]: " + "; ".join(fails)
 
 
 @pytest.mark.sequence
 def test_ate_geometric_mean_within_gate():
     rep = report()
+    if rep["aggregate_skipped"]:
+        pytest.skip(rep["aggregate_skipped"])
     if rep["skipped"]:
         pytest.skip("not every sequence has a result (HARNESS_REQUIRE_RESULTS is not 1)")
     assert not rep["aggregate"], "; ".join(rep["aggregate"])

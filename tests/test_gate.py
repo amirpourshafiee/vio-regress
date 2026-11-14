@@ -224,3 +224,53 @@ def test_threshold_widens_with_noisy_baseline():
 def test_threshold_needs_enough_samples():
     with pytest.raises(ValueError):
         threshold_from_baseline([0.1, 0.1])
+
+
+# ---------------------------------------------------------------- S5a: scoped runs + verdicts
+def test_scoped_run_judges_only_listed_sequences(tmp_path):
+    """Nightly runs ONE sequence: the others are out of scope, not missing."""
+    write_results(tmp_path / "res", {"MH_01_easy": result("MH_01_easy")})
+    rep = gate.evaluate_results_dir(tmp_path / "res", cfg(), require=True,
+                                    scope=["MH_01_easy"])
+    assert set(rep["sequences"]) == {"MH_01_easy"} and rep["sequences"]["MH_01_easy"] == []
+    assert rep["aggregate"] == [] and rep["aggregate_skipped"]
+    assert "1 of 3" in rep["aggregate_skipped"]
+    assert rep["passed"]
+
+
+def test_scoped_run_still_fails_closed_on_its_own_missing_sequence(tmp_path):
+    (tmp_path / "res").mkdir()
+    rep = gate.evaluate_results_dir(tmp_path / "res", cfg(), require=True, scope=["MH_01_easy"])
+    assert not rep["passed"] and any("missing result" in f for f in rep["sequences"]["MH_01_easy"])
+
+
+def test_scope_with_unknown_sequence_fails_closed(tmp_path):
+    write_results(tmp_path / "res", all_results())
+    rep = gate.evaluate_results_dir(tmp_path / "res", cfg(), require=True,
+                                    scope=["MH_01_easy", "MH_09_bogus"])
+    assert not rep["passed"] and any("not in thresholds" in f for f in rep["sequences"]["MH_09_bogus"])
+
+
+def test_full_scope_still_computes_the_aggregate(tmp_path):
+    write_results(tmp_path / "res", all_results(MH_01_easy=result("MH_01_easy", ate_x=3.0)))
+    rep = gate.evaluate_results_dir(tmp_path / "res", cfg(), require=True, scope=SEQS)
+    assert rep["aggregate"] and not rep["aggregate_skipped"] and not rep["passed"]
+
+
+def test_parse_scope():
+    assert gate.parse_scope(None) is None and gate.parse_scope("  ") is None
+    assert gate.parse_scope("MH_01_easy  V1_01_easy,MH_03_medium") == [
+        "MH_01_easy", "V1_01_easy", "MH_03_medium"]
+
+
+@pytest.mark.parametrize("fails,verdict", [
+    ([], "pass"),
+    (["needs re-baseline: no baseline for (MH_01_easy, ...)"], "needs-rebaseline"),
+    (["RPE ratio 1.500 > 1.280"], "quality-fail"),
+    (["missing result file results/MH_01_easy.json"], "missing"),
+    (["unparsable result x"], "missing"),
+    (["invalid result: provenance missing (vio_commit)"], "invalid"),
+    (["ok=false (ate.ok=False, rpe.ok=False)"], "quality-fail"),
+])
+def test_classify_keeps_rebaseline_apart_from_quality(fails, verdict):
+    assert gate.classify(fails) == verdict
