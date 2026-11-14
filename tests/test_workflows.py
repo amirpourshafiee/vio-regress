@@ -104,3 +104,98 @@ def test_actions_are_pinned_to_major_versions(wf):
     for s in steps(wf):
         if "uses" in s:
             assert re.search(r"@v\d+$", s["uses"]), s["uses"]
+
+
+# ---------------------------------------------------------------- S5b: publish-image.yml
+PUB = ROOT / ".github" / "workflows" / "publish-image.yml"
+ALL_WF = sorted((ROOT / ".github" / "workflows").glob("*.yml"))
+REPO_URL = "https://github.com/amirpourshafiee/vio-regress"
+
+
+@pytest.fixture(scope="module")
+def pub():
+    return yaml.safe_load(PUB.read_text())
+
+
+def test_publish_trigger_is_manual_only(pub):
+    assert set(triggers(pub)) == {"workflow_dispatch"}
+    text = PUB.read_text()
+    for word in ("schedule", "cron", "pull_request", "pull_request_target", "push:"):
+        assert not re.search(rf"^\s*#?\s*-?\s*{word}\s*:?", text, re.M), word
+
+
+def test_publish_permissions_exactly_contents_read_packages_write(pub):
+    assert pub["permissions"] == {"contents": "read", "packages": "write"}
+    for job in pub["jobs"].values():
+        assert "permissions" not in job
+
+
+@pytest.mark.parametrize("path", ALL_WF, ids=lambda p: p.name)
+def test_no_pull_request_target_anywhere(path):
+    assert "pull_request_target" not in path.read_text()
+
+
+@pytest.mark.parametrize("path", ALL_WF, ids=lambda p: p.name)
+def test_no_expressions_inside_run_blocks(path):
+    wf = yaml.safe_load(path.read_text())
+    for job in wf["jobs"].values():
+        for st in job.get("steps", []):
+            assert "${{" not in st.get("run", ""), f"{path.name}: {st.get('name')}"
+
+
+def test_publish_secrets_only_github_token_via_env(pub):
+    text = PUB.read_text()
+    assert set(re.findall(r"secrets\.(\w+)", text)) == {"GITHUB_TOKEN"}
+    for st in steps(pub):
+        for k, v in (st.get("with") or {}).items():
+            assert "secrets." not in str(v), f"secret passed via with: in {st.get('name')}"
+        if "secrets." in str(st.get("env", {})):
+            assert list(st["env"].values()).count("${{ secrets.GITHUB_TOKEN }}") == 1
+
+
+def test_publish_actions_pinned_to_full_sha_with_version_comment():
+    lines = [l for l in PUB.read_text().splitlines() if re.match(r"^\s*-?\s*uses:", l)]
+    assert lines
+    for l in lines:
+        assert re.search(r"@[0-9a-f]{40}\s+#\s*v\d+\.\d+\.\d+\s*$", l), l
+
+
+def test_publish_starts_with_fingerprint_and_same_free_disk_step(pub, wf):
+    st = steps(pub)
+    assert "/proc/cpuinfo" in st[0].get("run", "") and "model name" in st[0]["run"]
+    def free(s):
+        return next(x for x in s if x.get("name", "").startswith("Free disk"))
+    assert free(st)["run"] == free(steps(wf))["run"]
+
+
+def test_publish_builds_pinned_dockerfile_tags_and_logs_in_safely(pub):
+    run = "\n".join(s.get("run", "") for s in steps(pub))
+    assert "docker/Dockerfile.openvins" in run
+    assert "--build-arg OV_REF" not in run  # OV_REF stays the value pinned in the Dockerfile
+    assert "ghcr.io/${image_owner}/vioreg-openvins:${GITHUB_SHA::7}" in run
+    assert 'image_owner="${OWNER,,}"' in run  # GHCR repository names must be lowercase
+    assert "--password-stdin" in run and "-p " not in run.replace("--password-stdin", "")
+    assert "docker push" in run
+
+
+def test_publish_reports_registry_digest_as_output_and_summary(pub):
+    job = next(iter(pub["jobs"].values()))
+    push = next(s for s in steps(pub) if "docker push" in s.get("run", ""))
+    assert push.get("id")
+    assert "digest=" in push["run"] and "$GITHUB_OUTPUT" in push["run"]
+    assert "$GITHUB_STEP_SUMMARY" in push["run"]
+    assert "sha256:[0-9a-f]{64}" in push["run"]  # the digest is validated before it is reported
+    assert job["outputs"]["digest"] == f"${{{{ steps.{push['id']}.outputs.digest }}}}"
+
+
+def test_publish_never_touches_package_visibility():
+    # code only: a comment may say that visibility is left alone
+    text = "\n".join(l for l in PUB.read_text().lower().splitlines()
+                     if not l.lstrip().startswith("#"))
+    assert "visibility" not in text and "/packages/" not in text and "gh api" not in text
+
+
+def test_dockerfile_source_label_points_at_this_repo():
+    text = (ROOT / "docker" / "Dockerfile.openvins").read_text()
+    m = re.search(r'org\.opencontainers\.image\.source="([^"]+)"', text)
+    assert m and m.group(1) == REPO_URL

@@ -1,0 +1,88 @@
+name: publish-image
+# Manual only (S5b phase 1). Builds docker/Dockerfile.openvins (OV_REF pinned in the
+# Dockerfile) once and pushes it to GHCR, so every host can pull ONE identical image by its
+# registry digest. This workflow never changes the package's visibility.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: publish-image
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+      image: ${{ steps.push.outputs.image }}
+    steps:
+      - name: Host fingerprint (CPU model and SIMD flags)
+        run: |
+          grep -m1 'model name' /proc/cpuinfo
+          echo "logical CPUs: $(nproc)"
+          echo "SIMD flags: $(grep -m1 '^flags' /proc/cpuinfo | tr ' ' '\n' \
+            | grep -E '^(avx|avx2|avx512.*|fma|sse4.*)$' | sort | tr '\n' ' ')"
+
+      - name: Free disk (runner documents a 14 GB SSD; the image build alone peaks near 10 GB)
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Build the pinned image
+        env:
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          image_owner="${OWNER,,}"
+          tag="ghcr.io/${image_owner}/vioreg-openvins:${GITHUB_SHA::7}"
+          docker build -t "$tag" -f docker/Dockerfile.openvins docker
+          pinned=$(sed -n 's/^ARG OV_REF=//p' docker/Dockerfile.openvins)
+          ov=$(docker image inspect "$tag" --format '{{index .Config.Labels "vioreg.ov_ref"}}')
+          [ "$ov" = "$pinned" ] || { echo "::error::image ov_ref $ov != Dockerfile OV_REF $pinned"; exit 1; }
+          src=$(docker image inspect "$tag" --format '{{index .Config.Labels "org.opencontainers.image.source"}}')
+          [ "$src" = "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" ] || { echo "::error::source label $src is not this repo"; exit 1; }
+          echo "TAG=$tag" >> "$GITHUB_ENV"
+          docker builder prune -af
+          df -h /
+
+      - name: Log in to GHCR with the built-in token
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+
+      - name: Push and report the registry digest
+        id: push
+        run: |
+          docker push "$TAG" | tee "$RUNNER_TEMP/push.log"
+          digest=$(sed -nE 's/.*digest: (sha256:[0-9a-f]{64}).*/\1/p' "$RUNNER_TEMP/push.log" | tail -n 1)
+          if [ -z "$digest" ]; then
+            digest=$(docker image inspect "$TAG" --format '{{range .RepoDigests}}{{println .}}{{end}}' \
+              | sed -n 's/.*@//p' | head -n 1)
+          fi
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::no registry digest found"; exit 1; }
+          image="${TAG%:*}@$digest"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Published vioreg-openvins"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| tag | \`$TAG\` |"
+            echo "| registry digest | \`$digest\` |"
+            echo "| pull by digest | \`docker pull $image\` |"
+            echo "| OV_REF | \`$(sed -n 's/^ARG OV_REF=//p' docker/Dockerfile.openvins)\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Log out of GHCR
+        if: always()
+        run: docker logout ghcr.io
