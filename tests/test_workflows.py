@@ -290,3 +290,38 @@ def test_publish_image_runs_only_on_main_and_nothing_else_changed(pub):
     (job,) = pub["jobs"].values()
     assert job.get("if") == "github.ref == 'refs/heads/main'"
     assert set(triggers(pub)) == {"workflow_dispatch"}
+
+
+# ---------------------------------------------------------------- S6: red-build demo input
+def test_fault_input_is_optional_and_empty_by_default(wf):
+    inp = triggers(wf)["workflow_dispatch"]["inputs"]["fault"]
+    assert inp["type"] == "string" and inp["default"] == "" and not inp.get("required", False)
+    (job,) = wf["jobs"].values()
+    assert job["env"]["FAULT"] == "${{ inputs.fault }}", "reaches the shell only through env"
+
+
+def test_fault_input_is_validated_against_the_allow_list_before_use(wf):
+    from vioreg.fault_cli import SPEC_PATTERN
+    val = next(s for s in steps(wf) if s.get("name") == "Validate inputs")["run"]
+    assert f"fre='{SPEC_PATTERN}'" in val
+    assert '[[ -z "$FAULT" || "$FAULT" =~ $fre ]]' in val
+    names = [s.get("name", "") for s in steps(wf)]
+    assert names.index("Validate inputs") < next(i for i, s in enumerate(steps(wf))
+                                                 if "scripts/run_sequence.sh" in s.get("run", ""))
+
+
+def test_fault_is_applied_to_a_copy_and_the_default_path_is_unchanged(wf):
+    run = _step_with(wf, "scripts/run_sequence.sh")["run"]
+    assert 'python -m vioreg.fault_cli spec "$FAULT" --seq "$s" --print-data-root' in run
+    assert 'if [ -n "$FAULT" ]; then' in run
+    assert "data=data/euroc" in run, "no fault: the original data root, as before"
+    assert 'DATA="$data" bash scripts/run_sequence.sh "$s" results' in run
+    assert '"$fbag"' in run.split("trap", 1)[1].split("\n", 1)[0], "trap removes the copy too"
+    after_run = run.split('DATA="$data" bash scripts/run_sequence.sh', 1)[1]
+    assert 'rm -f "$bag" "$fbag"' in after_run, "both bags deleted after each sequence"
+    assert 'results/injected_fault_$s.json' in run
+
+
+def test_summary_marks_an_injected_fault(wf):
+    summ = next(s for s in steps(wf) if "vioreg.report" in s.get("run", ""))["run"]
+    assert '--injected-fault "$FAULT"' in summ

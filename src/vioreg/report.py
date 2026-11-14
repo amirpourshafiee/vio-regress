@@ -131,8 +131,13 @@ def _sequence_section(results_dir: Path, seq: str, cfg: dict, root: Path, fails:
 
 
 def render(results_dir: Path, cfg: dict, root: Path, seqs: list[str] | None = None,
-           host: Path | None = None, reference_host: Path | None = None) -> str:
+           host: Path | None = None, reference_host: Path | None = None,
+           injected_fault: str = "") -> str:
     out = ["## vioreg nightly", ""]
+    if injected_fault:
+        out += [f"> **FAULT INJECTED: `{injected_fault}`** (red-build demo). Each sequence "
+                f"was replayed from a faulted copy of its bag (labels/fault_manifest.csv). A "
+                f"QUALITY FAIL below is the expected outcome, not a regression.", ""]
     out += _host_section(host, reference_host)
     if seqs == []:
         return "\n".join(out)
@@ -165,6 +170,8 @@ def main(argv=None) -> int:
     ap.add_argument("--host", type=Path, default=None)
     ap.add_argument("--reference-host", type=Path,
                     default=ROOT / "docs" / "sensitivity" / "host_codespace.json")
+    ap.add_argument("--injected-fault", default="",
+                    help="the nightly `fault` input; prints a red-build-demo banner if set")
     a = ap.parse_args(argv)
     try:
         cfg = yaml.safe_load(a.thresholds.read_text())
@@ -172,7 +179,7 @@ def main(argv=None) -> int:
         print(f"## vioreg nightly\n\nthresholds unreadable: {e}")
         return 0
     seqs = gate.parse_scope(" ".join(a.seqs)) if a.seqs else None
-    print(render(a.results, cfg, a.root, seqs, a.host, a.reference_host))
+    print(render(a.results, cfg, a.root, seqs, a.host, a.reference_host, a.injected_fault))
     return 0
 
 
