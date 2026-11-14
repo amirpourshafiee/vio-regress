@@ -15,8 +15,6 @@ blur 9. The target of "at least 3 of 5" was **not met**. Margins were not change
 5 on every sequence** (see "Other sequences" below). The only difference is where time-offset
 starts to be caught: from 40 ms on MH_01_easy, but only from 100 ms on the other two (50 ms is
 absorbed there). Outside the planned set, blur 25 is caught on MH_03_medium alone.
-The same 15 settings on V1_01_easy and MH_03_medium give the same 2 of 5 (see the follow-up
-section below). There the time-offset cliff lies between 50 and 100 ms, not 30 and 40 ms.
 
 ## How a fault is applied (inspected in the pinned image)
 
@@ -158,7 +156,8 @@ What this adds to the MH_01_easy picture:
 - **IMU noise at about 4×/7× the sensor spec.** The config's discrete-time noise at 200 Hz is
   about 0.0024 rad/s and 0.028 m/s², so σ_w 0.01 and σ_a 0.2 are roughly 4× and 7× that. ATE
   rose 20% and RPE 7%, both under the margins. At 20×/35× the pipeline produced no estimate at all.
-- **`ok` stays true even for a diverged run** (time-offset 40–200 ms, ATE in km). The hard
+- **`ok` stays true even for a diverged run** (time-offset 40–200 ms on MH_01_easy, 100–200 ms
+  on V1_01_easy and MH_03_medium; ATE in km). The hard
   checks only see "a trajectory exists and covers the sequence". Divergence is caught only by
   the ratio signals.
 
@@ -168,53 +167,6 @@ the output poses. Its accuracy barely moved (RPE 1.139, ATE 0.995).
 Parameter source: the build guide's table is not in this repository. The planned values are the
 defaults in `tests/test_faults_windows.py` (σ_w 0.01, σ_a 0.2, gamma 2.2, blur 9,
 keep_every 2), which match the session brief.
-
-## Follow-up: the same 15 settings on V1_01_easy and MH_03_medium (2026-11-14)
-
-Same procedure, same pinned image and key, same unchanged margins, 2 serial runs each. Both
-runs of every setting gave bit-identical ATE, so each row is deterministic. The originals'
-sha256 matched before and after all copies (V1_01_easy `6dc6192f…`, MH_03_medium
-`c51b0064…`). Both identity controls reproduced the baseline exactly (RPE and ATE ratio
-1.000). The full view adds the clean `results/s5b_pinned` results for the other two sequences.
-
-| fault | parameter | V1_01_easy RPE / ATE ratio | V1 gate | MH_03_medium RPE / ATE ratio | MH_03 gate |
-|---|---|---|---|---|---|
-| identity (control) | — | 1.000 / 1.000 | pass | 1.000 / 1.000 | pass |
-| time-offset | 1 ms | 0.997 / 0.940 | pass | 1.021 / 1.138 | pass |
-| time-offset | 5 ms | 1.002 / 0.909 | pass | 1.052 / 1.404 | pass |
-| time-offset | 20 ms | 1.000 / 0.918 | pass | 1.029 / 1.354 | pass |
-| time-offset | 30 ms | 1.002 / 0.847 | pass | 1.073 / 1.390 | pass |
-| time-offset | 40 ms | 1.008 / 0.987 | **pass** | 1.011 / 1.575 | **pass** |
-| time-offset | 50 ms | 1.010 / 0.931 | **pass** | 0.985 / 1.352 | **pass** |
-| time-offset | 100 ms | 10 979 / 216 848 | **FAIL** (RPE; geomean 60.1) | 10 068 / 118 118 | **FAIL** (RPE; geomean 49.1) |
-| time-offset | 200 ms | 11 364 / 235 032 | **FAIL** (RPE; geomean 61.7) | 11 657 / 161 524 | **FAIL** (RPE; geomean 54.5) |
-| imu-noise | σ_w 0.01, σ_a 0.2 | 1.003 / 1.122 | pass | 1.176 / 1.480 | pass |
-| gamma | 2.2 | 0.991 / 0.939 | pass | 1.048 / 1.178 | pass |
-| blur | 9 px | 1.010 / 1.239 | pass | 1.091 / 1.288 | pass |
-| drop-frames | keep every 2 | 1.002 / 1.020 | **FAIL** (pose count 1377 < 2757 − 4) | 0.998 / 1.076 | **FAIL** (pose count 1133 < 2275 − 4) |
-| *stronger:* blur | 25 px | 1.036 / 1.043 | pass | **1.410** / 1.803 | **FAIL** (RPE 1.410 > 1.28) |
-| *stronger:* imu-noise | σ ×5 (0.05, 1.0) | no poses | FAIL (ok=false) | no poses | FAIL (ok=false) |
-
-Scoped and full verdicts agreed on every row: no single-sequence fault moved the 3-sequence
-ATE geomean past 1.5 unless RPE had already failed (largest non-diverged geomean: 1.217,
-MH_03_medium blur 25).
-
-**What this adds to the MH_01_easy result:**
-- **The planned-parameter score is still 2 of 5 on every sequence** (drop-frames, time-offset).
-  The ">= 3 of 5" target is not met on any of the three sequences.
-- **The time-offset divergence cliff depends on the sequence.** On MH_01_easy it lies between
-  30 and 40 ms. On V1_01_easy and MH_03_medium, 40 and 50 ms are absorbed (RPE ≤ 1.011) and
-  the cliff lies between 50 and 100 ms. So "the smallest offset caught is 40 ms" is true only
-  for MH_01_easy. Across all three sequences, the only offsets caught everywhere are 100 and 200 ms.
-- **MH_03_medium (faster motion) is the most fault-sensitive sequence.** Blur 25 is caught
-  there by RPE (1.410), the only image fault caught anywhere, but only at the stronger
-  setting chosen up front, not the planned 9 px, so it does not count toward the 5. Single-sequence
-  ATE on MH_03_medium rises 35–58% for every time offset from 5 to 50 ms, and 48% for planned
-  imu-noise. None of it is gated, because ATE counts only through the geomean.
-- **imu-noise ×5 breaks the pipeline on all three sequences.** The trajectory files are
-  unreadable (`score: run1.tum: unreadable trajectory`), so the gate fails closed with ok=false,
-  as intended. It is still not counted as a catch: the gate saw "no output", not "worse output".
-- `ok` again stayed true on every diverged run (100/200 ms, ATE about 11–15 km).
 
 ## Exact commands
 
