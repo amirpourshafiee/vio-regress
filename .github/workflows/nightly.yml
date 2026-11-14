@@ -80,8 +80,8 @@ jobs:
         run: |
           [ "$(wc -l < docker/IMAGE_REF)" -eq 1 ] || { echo "::error::docker/IMAGE_REF must be one line"; exit 1; }
           ref=$(cat docker/IMAGE_REF)
-          re='^ghcr\.io/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$'
-          [[ "$ref" =~ $re ]] || { echo "::error::docker/IMAGE_REF is not <repo>@sha256:<64 hex>: $ref"; exit 1; }
+          re='^ghcr\.io/amirpourshafiee/vioreg-openvins@sha256:[0-9a-f]{64}$'
+          [[ "$ref" =~ $re ]] || { echo "::error::docker/IMAGE_REF is not ghcr.io/amirpourshafiee/vioreg-openvins@sha256:<64 hex>: $ref"; exit 1; }
           docker pull "$ref"
           docker image inspect "$ref" --format '{{range .RepoDigests}}{{println .}}{{end}}' \
             | grep -qxF "$ref" || { echo "::error::pulled image does not carry the pinned digest"; exit 1; }

@@ -5,19 +5,27 @@
   "real_key": {
    "MH_01_easy": {
     "vio_commit": "93adc241390d13e99232652cf05cbe18a93c7bea",
-    "image_digest": "sha256:29b31b7a0fccc6ab0cd5e4c4476b1f7786fa7696ddde2fec7d1c8e00ff7e4c05",
+    "image_digest": "sha256:f08eacb146ff87f81849052494ee1e0a41798dc56271276f114b753d4439c308",
     "config_hash": "56bb52f244379fdb22a2099edafcd6d5e2688b79"
    },
    "MH_03_medium": {
     "vio_commit": "93adc241390d13e99232652cf05cbe18a93c7bea",
-    "image_digest": "sha256:29b31b7a0fccc6ab0cd5e4c4476b1f7786fa7696ddde2fec7d1c8e00ff7e4c05",
+    "image_digest": "sha256:f08eacb146ff87f81849052494ee1e0a41798dc56271276f114b753d4439c308",
     "config_hash": "56bb52f244379fdb22a2099edafcd6d5e2688b79"
    },
    "V1_01_easy": {
     "vio_commit": "93adc241390d13e99232652cf05cbe18a93c7bea",
-    "image_digest": "sha256:29b31b7a0fccc6ab0cd5e4c4476b1f7786fa7696ddde2fec7d1c8e00ff7e4c05",
+    "image_digest": "sha256:f08eacb146ff87f81849052494ee1e0a41798dc56271276f114b753d4439c308",
     "config_hash": "56bb52f244379fdb22a2099edafcd6d5e2688b79"
    }
+  },
+  "rekey": {
+   "produced_on_image_digest": "sha256:f08eacb146ff87f81849052494ee1e0a41798dc56271276f114b753d4439c308",
+   "produced_on_image": "vioreg-openvins:v2.7 (local build, image ID in the containerd store)",
+   "rekeyed_to_image_digest": "sha256:29b31b7a0fccc6ab0cd5e4c4476b1f7786fa7696ddde2fec7d1c8e00ff7e4c05",
+   "rekeyed_on": "2026-11-14 (S5b)",
+   "rerun_on_pinned_image": false,
+   "note": "Produced on the earlier local image and re-keyed only: results.*.image_digest was changed to the pinned image's registry digest so that the gate fixture matches the baseline key. These variants were not re-run on the pinned image (docker/IMAGE_REF). The base config reproduced its baseline poses exactly on the pinned image (docs/rebaseline_s5b), but that was not checked for these variants. Re-running them is an open item in NEXT.md."
   }
  },
  "results": {

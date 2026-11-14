@@ -74,7 +74,8 @@ exactly** (RPE and ATE ratio 1.000). Only the key differed.
   `docker/Dockerfile.openvins` once and pushes it to GHCR. Run 43561755606 published tag
   `d492d65` (OV_REF `93adc241`).
 - **`docker/IMAGE_REF`** holds that image as one line, `<repo>@sha256:<64 hex>`. nightly
-  checks that form, pulls it, and fails unless `docker image inspect` RepoDigests lists
+  requires it to match exactly `^ghcr\.io/amirpourshafiee/vioreg-openvins@sha256:[0-9a-f]{64}$`
+  (one line, no tag, no other repository), pulls it, and fails unless `docker image inspect` RepoDigests lists
   exactly that ref. It then exports the ref as `IMAGE`. nightly keeps `contents: read`:
   the package is public, so the pull is anonymous. If the package became private the pull
   would fail rather than widen the token.

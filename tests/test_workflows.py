@@ -244,3 +244,14 @@ def test_nightly_loops_per_sequence_fetch_run_score_delete(wf):
 def test_nightly_score_uses_the_pulled_image(wf):
     run = _step_with(wf, "scripts/run_sequence.sh")["run"]
     assert '--image "$IMAGE"' in run
+
+
+def test_image_ref_validated_against_exactly_this_repo(wf):
+    """docker/IMAGE_REF must match exactly one repository and a full digest, nothing else."""
+    run = _step_with(wf, "docker pull")["run"]
+    assert "re='^ghcr\\.io/amirpourshafiee/vioreg-openvins@sha256:[0-9a-f]{64}$'" in run
+    assert '[[ "$ref" =~ $re ]]' in run
+    assert run.index('=~ $re') < run.index("docker pull"), "validate before any use"
+    # and the committed file passes that exact pattern
+    ref = (ROOT / "docker" / "IMAGE_REF").read_text()
+    assert re.fullmatch(r"ghcr\.io/amirpourshafiee/vioreg-openvins@sha256:[0-9a-f]{64}\n", ref)
