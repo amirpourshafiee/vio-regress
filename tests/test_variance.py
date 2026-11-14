@@ -91,3 +91,57 @@ def test_baseline_fails_closed_without_score_json(variant_root):
     with pytest.raises(variance.VarianceError, match="score"):
         variance.build_baseline(root, [SEQ], data,
                                 {"defaults": {}, "sequences": {SEQ: {"skip_s": 0}}})
+
+
+# ---------------------------------------------------------------- pose-level determinism
+def _write(path, rows):
+    path.write_text("".join(" ".join(f"{x:.9f}" for x in r) + "\n" for r in rows))
+
+
+def _rows(n=6, t0=100.0):
+    return [[t0 + 0.05 * i, i * 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0] for i in range(n)]
+
+
+def test_runs_differing_only_in_the_final_pose_are_the_same_trajectory(tmp_path):
+    """S3b: the recorder's shutdown race can drop the last pose. Two files that differ
+    only there have different sha1s but are the same estimator output."""
+    a, b = tmp_path / "a.tum", tmp_path / "b.tum"
+    _write(a, _rows(6))
+    _write(b, _rows(5))  # identical except the final pose is missing
+    assert a.read_bytes() != b.read_bytes()
+    assert variance.pose_equivalent(a, b)
+    assert variance.distinct_trajectories([a, b]) == 1
+
+
+def test_a_changed_middle_pose_is_a_different_trajectory(tmp_path):
+    a, b = tmp_path / "a.tum", tmp_path / "b.tum"
+    rows = _rows(6)
+    _write(a, rows)
+    rows[2][1] += 1e-9 * 10  # one position moved by 10 nm, as printed
+    _write(b, rows)
+    assert not variance.pose_equivalent(a, b)
+    assert variance.distinct_trajectories([a, b]) == 2
+
+
+def test_a_truncated_run_is_not_the_same_trajectory(tmp_path):
+    a, b = tmp_path / "a.tum", tmp_path / "b.tum"
+    _write(a, _rows(10))
+    _write(b, _rows(5))  # 5 trailing poses missing: more than the shutdown race explains
+    assert not variance.pose_equivalent(a, b)
+
+
+def test_different_first_pose_time_is_a_different_trajectory(tmp_path):
+    a, b = tmp_path / "a.tum", tmp_path / "b.tum"
+    _write(a, _rows(6))
+    _write(b, _rows(6, t0=100.001))
+    assert not variance.pose_equivalent(a, b)
+
+
+def test_summarise_reports_pose_level_and_file_level_counts(variant_root):
+    root, data = variant_root
+    d = root / SEQ
+    rows = (d / "run1.tum").read_text().splitlines(keepends=True)
+    (d / "run5.tum").write_text("".join(rows[:-1]))  # run1 minus its final pose
+    s = variance.summarise(variance.collect_runs(root, SEQ, data, "posyaw", 0.0))
+    assert s["distinct_files"] == 3            # run1/2, run3, run5 differ as bytes
+    assert s["distinct_trajectories"] == 2     # run5 == run1 pose for pose
