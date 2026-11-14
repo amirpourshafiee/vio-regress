@@ -1,5 +1,5 @@
-Done (S1-S2): pinned OpenVINS v2.7 image, fetch_euroc.sh, score.py (frozen contract, fail closed), 3-way ATE cross-check (docs/crosscheck.md).
-Done (S3): config_hash = sha1(estimator_config + referenced kalibr imu/imucam yamls, sorted; configs baked into image); run_sequence.sh; 100-run variance study (docs/variance/): serial replay is bit-identical run to run, 0/100 failed; realtime differs by ~31 mm on MH_01.
-Next (S4): re-run the baseline on the CI runner to test cross-host determinism, then set thresholds from docs/variance/baseline.json (MAD=0, so margin needs its own justification); pin MODE=serial; 2 runs/seq to detect lost determinism.
-Next: restore the nightly schedule once thresholds are set (ask before editing .github/workflows); strip -g3 from the image (802 MB).
-Open: thresholds.yaml skip_s=15 vs upstream bag_start=17.5 on MH_03 (coverage OK at 0.979)? RC 429 risk in CI (cache data/euroc)? poetry.lock?
+Done (S1-S3): pinned OpenVINS v2.7 image, fetch, score.py (frozen contract), 3-way ATE cross-check, config_hash incl. kalibr yamls, run_sequence.sh, S3 variance: serial replay bit-identical run to run.
+Done (S3b): runner reuse guard; realtime is timing-dependent (detached init thread; diverges at 2x rate or under CPU load); legit one-knob changes move ATE -22%..+73% on MH_01, -14%..+1% on V1_01, 0/77 failed, coverage and pose count never moved (docs/sensitivity.md); host = AMD EPYC 7763, avx2, no AVX-512.
+Next (S4): design a two-tier gate: hard fail on ok=false / coverage drop / lost determinism / ATE above the legitimate envelope; a "changed" flag on any pose-level trajectory change. Placeholder MH_01 max_ate 0.15 m would fail an innocent fast_threshold=18 (157.6 mm).
+Next (S5): re-run the baseline and hostinfo on the GitHub runner (cross-machine untested); pin MODE=serial; compare trajectories pose by pose, not by file sha (shutdown race can drop the last pose).
+Open: widen the envelope (more sequences, MH_03, more knobs) before S4 picks numbers? RC 429 risk in CI? poetry.lock? strip -g3 from image?
