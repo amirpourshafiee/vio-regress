@@ -1,0 +1,16 @@
+run_id,sequence,fault,params,seed,created_utc
+MH_01_easy__identity_none,MH_01_easy,identity,{},0,2026-11-14T08:35:59Z
+MH_01_easy__time-offset_offset_ms1,MH_01_easy,time-offset,"{""offset_ms"": 1.0}",0,2026-11-14T08:40:07Z
+MH_01_easy__time-offset_offset_ms5,MH_01_easy,time-offset,"{""offset_ms"": 5.0}",0,2026-11-14T08:43:29Z
+MH_01_easy__time-offset_offset_ms20,MH_01_easy,time-offset,"{""offset_ms"": 20.0}",0,2026-11-14T08:46:46Z
+MH_01_easy__time-offset_offset_ms50,MH_01_easy,time-offset,"{""offset_ms"": 50.0}",0,2026-11-14T08:50:26Z
+MH_01_easy__time-offset_offset_ms100,MH_01_easy,time-offset,"{""offset_ms"": 100.0}",0,2026-11-14T08:53:15Z
+MH_01_easy__time-offset_offset_ms200,MH_01_easy,time-offset,"{""offset_ms"": 200.0}",0,2026-11-14T08:56:10Z
+MH_01_easy__imu-noise_sigma_w0.01-sigma_a0.2-seed0,MH_01_easy,imu-noise,"{""sigma_a"": 0.2, ""sigma_w"": 0.01}",0,2026-11-14T08:59:25Z
+MH_01_easy__gamma_gamma2.2,MH_01_easy,gamma,"{""gamma"": 2.2}",0,2026-11-14T09:03:17Z
+MH_01_easy__blur_length9,MH_01_easy,blur,"{""length"": 9}",0,2026-11-14T09:07:20Z
+MH_01_easy__drop-frames_keep_every2,MH_01_easy,drop-frames,"{""keep_every"": 2}",0,2026-11-14T09:10:13Z
+MH_01_easy__time-offset_offset_ms30,MH_01_easy,time-offset,"{""offset_ms"": 30.0}",0,2026-11-14T09:12:36Z
+MH_01_easy__time-offset_offset_ms40,MH_01_easy,time-offset,"{""offset_ms"": 40.0}",0,2026-11-14T09:15:38Z
+MH_01_easy__imu-noise_sigma_w0.05-sigma_a1-seed0,MH_01_easy,imu-noise,"{""sigma_a"": 1.0, ""sigma_w"": 0.05}",0,2026-11-14T09:18:36Z
+MH_01_easy__blur_length25,MH_01_easy,blur,"{""length"": 25}",0,2026-11-14T09:20:54Z
