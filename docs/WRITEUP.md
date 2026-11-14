@@ -1,9 +1,13 @@
 # vioreg part 1: a regression gate for visual-inertial odometry
 
 This is part 1 of vioreg. It covers a working regression gate and the evidence behind its
-design. The later stages planned for the project (failure windows, a labeler, human labels,
-a vision-language model (VLM) judge, and agreement measured with Cohen's kappa) are **not
-built**. Section 9 lists them.
+design.
+
+**Not built:** the later stages planned for the project, which are failure windows, a
+labeler, human labels, a vision-language model (VLM) judge, and agreement measured with
+Cohen's kappa. Unit-tested starter code for the windows, the judge and kappa exists in
+`src/vioreg/`, but it has **never been run on real data**. There are **no labels and no
+results**. Section 9 lists these stages.
 
 ## 1. What it is and why
 
@@ -14,10 +18,14 @@ vehicle) dataset through OpenVINS, an open-source VIO estimator. It scores the o
 trajectory against ground truth and gives a pass or fail verdict for a commit. The gate
 judges **estimator output only**, using two error measures. Absolute trajectory error (ATE)
 is the position error of the whole trajectory after alignment. Relative pose error (RPE) is
-the drift over short windows. The question is narrow: are the trajectories worse than a recorded
-baseline on the same inputs? It runs on
-every pull request against stored results, and nightly in continuous integration (CI) on
-three sequences: MH_01_easy, V1_01_easy and MH_03_medium.
+the drift over short windows. The question is narrow: are the trajectories worse than a
+recorded baseline on the same inputs?
+
+It runs at two levels in continuous integration (CI). The **pull request tier** (also run on
+every push to `main`) runs the unit tests and the gate on stored golden result files. It
+**does not run OpenVINS** and needs no dataset. **Only the nightly** (scheduled daily) **and
+manual dispatches** of it run the estimator, replaying three sequences: MH_01_easy, V1_01_easy
+and MH_03_medium.
 
 ## 2. Design
 
@@ -85,7 +93,7 @@ the ATE aggregate reports "not judged" and also fails.
 | Codespace, re-baseline on the pinned image | not recorded | 3 sequences, 2 runs each | every run pose-equivalent to the stored baseline; every metric identical |
 | GitHub runner, run 43573219393 | Intel Xeon Platinum 8573C (AVX-512) | 3 sequences, 2 runs each | both runs of every sequence reproduced the baseline exactly; RPE and ATE ratio 1.000; gate PASS |
 
-<!-- source: docs/variance/variance.md, docs/ci.md ("S5a", "S5b", "First green nightly") -->
+<!-- source: docs/variance/variance.md (S3 runs), docs/ci.md ("S5a", "S5b", "First green nightly"; baseline host CPU on the "Different CPU, same poses" line) -->
 
 Serial OpenVINS was **observed** to reproduce the baseline poses exactly on two CPU families,
 AMD (without AVX-512) and Intel (with AVX-512). That is evidence for one pair of CPUs and one
@@ -168,7 +176,7 @@ time offset online, which absorbs small offsets. Past a sequence-specific point 
 estimator diverges to kilometres of error. Below that point the gate sees almost nothing.
 
 One stronger setting per fault was chosen up front and reported separately. Blur of 25 px
-was caught only on MH_03_medium (RPE 1.410), the sequence with the fastest motion. Inertial
+was caught only on MH_03_medium (RPE 1.410), the sequence with faster motion. Inertial
 noise at 5 times the planned level produced no poses at all on any sequence (see section 6).
 
 **Why so much is invisible.** The gate reads trajectory output only. It never inspects
@@ -204,7 +212,8 @@ keep the gate as it is and document these gaps, rather than tune margins to make
 - First CI run before the image was pinned, which failed as predicted with NEEDS-REBASELINE
   while reproducing the baseline poses exactly:
   <https://github.com/amirpourshafiee/vio-regress/actions/runs/43558839448>
-- Image publish run: <https://github.com/amirpourshafiee/vio-regress/actions/runs/43561755606>
+- Image publish run, which built and pushed the pinned image:
+  <https://github.com/amirpourshafiee/vio-regress/actions/runs/43561755606>
 
 No red-build demo run (the nightly with a `fault` input) is recorded in the repository yet.
 `docs/ci.md` describes how to start one and what it should print.
@@ -248,9 +257,10 @@ HARNESS_RESULTS=$R HARNESS_REQUIRE_RESULTS=1 HARNESS_SEQUENCES=MH_01_easy pytest
 ## 9. Future work (not built)
 
 The gate says *that* a sequence got worse. The next stages were meant to say *why*, and to
-measure how far an automated explanation can be trusted. None of these stages is built. Starter
-modules for windows, the judge and kappa exist in `src/vioreg/` with unit tests, but no
-pipeline runs them, no labels exist, and no result has been produced.
+measure how far an automated explanation can be trusted. None of these stages is built.
+Starter modules for windows, the judge and kappa exist in `src/vioreg/` with unit tests, but
+they have never been run on real data, no pipeline calls them, and there are no labels and
+no results.
 
 - **Failure windows (not built):** cut a failed run into short windows ranked by error, plus
   control windows where nothing went wrong.
