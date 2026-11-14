@@ -291,3 +291,51 @@ def test_run_config_hash_sidecar_must_match_recorded_hash(layout):
     (res / SEQ / "run2.config_hash").write_text("e" * 40 + "\n")
     out, ok = run_score(res, gt_csv)
     assert_failed_result(res, out, ok)
+
+
+# ---------------------------------------------------------------- image digest (S5b)
+def test_provenance_image_digest_is_the_registry_digest_not_the_image_id(monkeypatch, tmp_path):
+    dg = "sha256:" + "c" * 64
+    ref = f"ghcr.io/owner/vioreg-openvins@{dg}"
+    info = {"Id": "sha256:" + "e" * 64, "RepoDigests": [f"ghcr.io/owner/vioreg-openvins@{dg}"],
+            "Config": {"Labels": {"vioreg.ov_ref": "f" * 40}}}
+    monkeypatch.setattr(score.ir, "docker_inspect", lambda r: info)
+    monkeypatch.setattr(score, "_run", lambda cmd, **kw: (_ for _ in ()).throw(OSError("x")))
+    prov = score.collect_provenance(image=ref, config_name="euroc_mav", repo=tmp_path)
+    assert prov["image_digest"] == dg and prov["vio_commit"] == "f" * 40
+
+
+def test_provenance_image_digest_none_for_a_local_build(monkeypatch, tmp_path):
+    info = {"Id": "sha256:" + "e" * 64, "RepoDigests": [],
+            "Config": {"Labels": {"vioreg.ov_ref": "f" * 40}}}
+    monkeypatch.setattr(score.ir, "docker_inspect", lambda r: info)
+    monkeypatch.setattr(score, "_run", lambda cmd, **kw: (_ for _ in ()).throw(OSError("x")))
+    prov = score.collect_provenance(image="vioreg-openvins:v2.7", config_name="euroc_mav",
+                                    repo=tmp_path)
+    assert prov["image_digest"] is None  # -> result invalid (fail closed)
+
+
+def test_run_made_with_another_image_fails_the_result(layout):
+    gt, gt_csv, res = layout
+    save_tum(est_with_known_error(gt, 0.02), res / SEQ / "run1.tum")
+    (res / SEQ / "run1.image_digest").write_text("sha256:" + "9" * 64 + "\n")
+    out, ok = run_score(res, gt_csv)
+    assert_failed_result(res, out, ok)
+
+
+def test_run_with_matching_image_sidecar_passes(layout):
+    gt, gt_csv, res = layout
+    save_tum(est_with_known_error(gt, 0.02), res / SEQ / "run1.tum")
+    (res / SEQ / "run1.image_digest").write_text(PROV["image_digest"] + "\n")
+    out, ok = run_score(res, gt_csv)
+    assert ok
+
+
+def test_score_default_image_is_the_pinned_ref(monkeypatch):
+    from vioreg import image_ref as ir
+    monkeypatch.delenv("IMAGE", raising=False)
+    seen = {}
+    monkeypatch.setattr(score, "collect_provenance",
+                        lambda **kw: seen.update(kw) or dict(PROV))
+    score.main(["--seqs", "MH_99_bogus"])
+    assert seen["image"] == ir.pinned_ref(env={})
