@@ -93,7 +93,7 @@ the ATE aggregate reports "not judged" and also fails.
 | GitHub runner, run 43558839448 | AMD EPYC 7763 | MH_01_easy, 2 runs | both runs reproduced the baseline trajectory exactly; verdict NEEDS-REBASELINE only because the image was rebuilt |
 | Codespace, re-baseline on the pinned image | not recorded | 3 sequences, 2 runs each | every run pose-equivalent to the stored baseline; every metric identical |
 | GitHub runner, run 43573219393 | Intel Xeon Platinum 8573C (AVX-512) | 3 sequences, 2 runs each | both runs of every sequence reproduced the baseline exactly; RPE and ATE ratio 1.000; gate PASS |
-| GitHub runner, run 43743071045 (first scheduled nightly) | Intel Xeon 6975P-C (AVX-512) | 3 sequences, 2 runs each | MH_01_easy and V1_01_easy reproduced the baseline exactly; on MH_03_medium the 2 runs gave 2 distinct trajectories, neither identical to the baseline; gate QUALITY FAIL on pose count |
+| GitHub runner, run 43743071045 (first scheduled nightly) | Intel Xeon 6975P-C (AVX-512) | 3 sequences, 2 runs each | MH_01_easy and V1_01_easy reproduced the baseline exactly; on MH_03_medium the 2 runs started 6 and 14 poses (0.30 s and 0.70 s) after the baseline and matched it row for row from there; gate QUALITY FAIL on pose count |
 
 <!-- source: docs/variance/variance.md (S3 runs), docs/ci.md ("S5a", "S5b", "First green nightly"; baseline host CPU on the "Different CPU, same poses" line) -->
 
@@ -107,12 +107,12 @@ A third CPU type, AMD EPYC 9V74 with AVX-512, appeared in the red-build demo run
 (section 7). No determinism claim is made from that run, because its injected fault
 changes the poses.
 
-A fourth CPU type, Intel Xeon 6975P-C with AVX-512, ran the first scheduled nightly (run 43743071045, section 7). There the observation did not hold for one sequence. MH_01_easy and V1_01_easy reproduced the baseline exactly, but the two runs of MH_03_medium gave two distinct trajectories, and neither equals the baseline. The image digest, code commit and config hash were the same as in the passing runs. I do not know the cause. A CPU-specific effect is one possible explanation, but this is one run on one host and it cannot show that. So the exact-reproduction claim above holds only for the runs on the CPU families named there, and the exact-pose check stays a warning.
+A fourth CPU type, Intel Xeon 6975P-C with AVX-512, ran the first scheduled nightly (run 43743071045, section 7). There the observation did not hold for one sequence. MH_01_easy and V1_01_easy reproduced the baseline exactly, but the two runs of MH_03_medium differed from the baseline only in where they started. Run 1 began 6 poses (0.30 s) after the baseline and run 2 began 14 poses (0.70 s) after it. All three end at the same timestamp, and every pose they share is identical in every column, quaternion included. So once running, the estimator agreed with the baseline exactly; what varied was the start-up time. The image digest, code commit and config hash were the same as in the passing runs. I do not know why the start moves. The logs were at WARNING verbosity and show nothing about initialization. A CPU-specific effect is one possible explanation, but this is one run on one host and it cannot show that. So the exact-reproduction claim above holds only for the runs on the CPU families named there, and the exact-pose check stays a warning.
 
-<!-- source: job summary of run 43743071045 (host, per-sequence verdicts, pose counts, runs agree) -->
+<!-- source: job summary of run 43743071045 (host, per-sequence verdicts, pose counts, runs agree); artifact vio-results-43743071045 (MH_03_medium run1.tum and run2.tum compared with baselines/MH_03_medium.tum) -->
 
 On a fixed host, 10 identical runs are 1 sample. The nightly uses 2 runs per sequence,
-enough to notice if determinism ever breaks. Run 43743071045 is that case: its 2 runs of MH_03_medium disagreed.
+enough to notice if determinism ever breaks. Run 43743071045 is that case: its 2 runs of MH_03_medium started at different times.
 
 ## 4. Sensitivity findings
 
@@ -227,7 +227,7 @@ keep the gate as it is and document these gaps, rather than tune margins to make
   re-run on it.
 - **The exact-pose check is still a warning.** A same-key run with different poses does not
   fail the gate. This is deliberate until cross-host behavior is known on more hardware.
-- **MH_03_medium runs disagreed on a fourth CPU type, and the cause is unexplained.** In the first scheduled nightly (run 43743071045, Intel Xeon 6975P-C) its 2 runs gave 2 distinct trajectories and 2261 associated poses against a baseline of 2275 with a margin of 4, so the gate failed it on pose count. Its RPE ratio was 1.002 and its ATE ratio 1.000, so accuracy was unchanged. The margins were not changed in response. More scheduled runs are the next evidence.
+- **MH_03_medium runs started at different times on a fourth CPU type, and the cause is unexplained.** In the first scheduled nightly (run 43743071045, Intel Xeon 6975P-C) the 2 runs began 6 and 14 poses after the baseline and were identical to it from there on. That gave 2261 associated poses against a baseline of 2275 with a margin of 4, so the gate failed it on pose count. Its RPE ratio was 1.002 and its ATE ratio 1.000, so accuracy was unchanged. The margin of 4 was set for a recorder race that loses up to 2 poses at each end; this loss was 14 at the start only. The margins were not changed in response, because one run on one host is not enough evidence to set a new one. More scheduled runs are the next evidence.
 - **Licensing.** The published image contains OpenVINS, which upstream distributes under
   GPL-3. I have not verified the license of everything in the image myself.
 
@@ -247,7 +247,7 @@ keep the gate as it is and document these gaps, rather than tune margins to make
 
 The estimator diverged on all three sequences (RPE ratios above 10,000 against the 1.28 limit), so this shows the gate catching a catastrophic fault, not a subtle one. On MH_03_medium the two runs gave two distinct trajectories, so a diverged run is not reproducible. Healthy runs matched on the first two CPU families, but see the first scheduled nightly below. `docs/ci.md` describes how to start a demo run and what it should print.
 
-- First scheduled nightly, gate QUALITY FAIL (PASS on MH_01_easy and V1_01_easy; FAIL on MH_03_medium, pose count 2261 against 2275 minus a margin of 4, and its 2 runs disagreed): <https://github.com/amirpourshafiee/vio-regress/actions/runs/43743071045>
+- First scheduled nightly, gate QUALITY FAIL (PASS on MH_01_easy and V1_01_easy; FAIL on MH_03_medium, pose count 2261 against 2275 minus a margin of 4, and its 2 runs started at different times): <https://github.com/amirpourshafiee/vio-regress/actions/runs/43743071045>
 
 <!-- source: docs/ci.md (run IDs); job summary of run 43638509946 (demo banner, ratios, CPU, MH_03 runs); job summary of run 43743071045 (verdicts, CPU, pose counts, MH_03 runs); URLs are github.com/<repo>/actions/runs/<run ID> -->
 
