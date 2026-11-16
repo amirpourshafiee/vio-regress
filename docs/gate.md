@@ -154,6 +154,11 @@ Tests (`tests/test_gate.py` 32, `tests/test_gate_goldens.py` 7,
 - **Missing results fail closed** with `HARNESS_REQUIRE_RESULTS=1` (and so does the
   aggregate).
 - **A missing baseline key fails** with "needs re-baseline" (e.g. a changed `config_hash`).
+- **Runs that disagree fail** with "runs disagree" when the runs of one sequence under the same key
+  are not one trajectory (`vioreg.variance.distinct_trajectories` > 1). If nothing but the pose
+  count failed besides that, the verdict is NONDETERMINISTIC, not QUALITY FAIL: the estimator was
+  not repeatable on that host (first scheduled nightly, run 43743071045, MH_03_medium). Any RPE,
+  coverage or ok=false failure keeps the QUALITY FAIL label. Margins are unchanged.
 - **The committed margins sit inside the measured gaps.** A guard test pins `rpe_ratio_max`
   strictly between 1.145 and 1.431, against silent loosening.
 - Pose warning: a positive control (same key, MH_01 trajectory swapped for another

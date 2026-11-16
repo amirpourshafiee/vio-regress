@@ -29,6 +29,7 @@ from pathlib import Path
 from . import gate
 
 LABEL = {"pass": "PASS", "needs-rebaseline": "NEEDS RE-BASELINE", "quality-fail": "QUALITY FAIL",
+         "nondeterministic": "NONDETERMINISTIC",
          "missing": "MISSING", "invalid": "INVALID RESULT", "fetch-failed": "DATA FETCH FAILED"}
 
 

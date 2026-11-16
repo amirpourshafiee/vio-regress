@@ -194,13 +194,38 @@ def emit_warning(msg: str) -> None:
 
 
 # ---------------------------------------------------------------- verdicts + scope (S5a)
-VERDICTS = ("pass", "needs-rebaseline", "quality-fail", "missing", "invalid", "fetch-failed")
+VERDICTS = ("pass", "needs-rebaseline", "quality-fail", "nondeterministic", "missing", "invalid",
+            "fetch-failed")
 FETCH_FAILED = "data fetch failed, not a quality result"
+RUNS_DISAGREE = "runs disagree"
+POSE_COUNT = "associated pose count"
+
+
+def runs_disagree(results_dir: Path, seq: str) -> str | None:
+    """Reason if the runs of one sequence (same key, same host, same bag) are not the same
+    trajectory, else None. Serial OpenVINS is expected to be repeatable (S3); when it is not,
+    every metric of that sequence describes a coin toss, so say so instead of letting a
+    pose-count or RPE line look like a code regression. Fewer than 2 runs: no claim."""
+    from .score import find_runs
+    from .variance import distinct_trajectories
+
+    runs = [p for _, p in find_runs(Path(results_dir) / seq)]
+    if len(runs) < 2:
+        return None
+    try:
+        n = distinct_trajectories(runs)
+    except Exception as e:  # noqa: BLE001 - an unreadable run is already a hard failure
+        return f"{RUNS_DISAGREE}: could not compare runs ({e})"
+    if n == 1:
+        return None
+    return (f"{RUNS_DISAGREE}: {n} distinct trajectories from {len(runs)} runs under the same "
+            f"key (the estimator was not repeatable on this host)")
 
 
 def classify(fails: list[str]) -> str:
     """One verdict per sequence, so a key mismatch is never reported as a quality failure.
-    Precedence: fetch-failed > missing > invalid > needs-rebaseline > quality-fail > pass.
+    Precedence: fetch-failed > missing > invalid > needs-rebaseline > nondeterministic
+    (runs disagree and only the pose count failed) > quality-fail > pass.
     fetch-failed comes first: with no data, every other failure is a consequence of that."""
     if not fails:
         return "pass"
@@ -212,6 +237,11 @@ def classify(fails: list[str]) -> str:
         return "invalid"
     if any(f.startswith("needs re-baseline") for f in fails):
         return "needs-rebaseline"
+    # Runs disagree and nothing but the pose count failed: a repeatability problem, not a
+    # quality one. Any RPE, coverage or ok=false failure keeps the quality-fail label.
+    if any(f.startswith(RUNS_DISAGREE) for f in fails) and all(
+            f.startswith((RUNS_DISAGREE, POSE_COUNT)) for f in fails):
+        return "nondeterministic"
     return "quality-fail"
 
 
@@ -292,6 +322,10 @@ def evaluate_results_dir(results_dir: Path, cfg: dict, require: bool,
             continue
         results[seq] = r
         rep["sequences"][seq] = evaluate_sequence(r, cfg, seq)
+        if not any(f.startswith("needs re-baseline") for f in rep["sequences"][seq]):
+            why_runs = runs_disagree(results_dir, seq)
+            if why_runs:
+                rep["sequences"][seq].append(why_runs)
         if not rep["sequences"][seq]:
             w, n = pose_warnings(results_dir, seq, r, cfg, root)
             rep["warnings"] += w
