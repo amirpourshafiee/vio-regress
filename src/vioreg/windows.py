@@ -29,6 +29,10 @@ ID_SALT = "vioreg-windows-v1"
 # NOT the gate's skip_s, which counts from ground-truth start and removes no poses on the
 # gated sequences (docs/crosscheck.md); the two are different quantities.
 TRIM_START_S = 15.0
+# Minimum time between an injected window and any natural or control window of the same
+# sequence (one window length). Without it, adjacent windows showed the same scene clean and
+# faulted (S7 Stage 1, MH_01_easy: gamma 89.7 s right after control 84.7-89.7 s).
+INJ_GAP_S = 5.0
 
 
 def rank_windows(t: np.ndarray, err: np.ndarray, win_s: float = 5.0) -> list[dict]:
@@ -44,9 +48,10 @@ def rank_windows(t: np.ndarray, err: np.ndarray, win_s: float = 5.0) -> list[dic
     return rows
 
 
-def overlaps(t0: float, t1: float, avoid) -> bool:
-    """[t0, t1) overlaps any (a0, a1) in avoid; windows that only touch do not overlap."""
-    return any(t0 < a1 and a0 < t1 for a0, a1 in avoid)
+def overlaps(t0: float, t1: float, avoid, gap_s: float = 0.0) -> bool:
+    """[t0, t1) overlaps any (a0, a1) in avoid, or comes closer to one than gap_s. With
+    gap_s=0, windows that only touch do not overlap; a distance of exactly gap_s is allowed."""
+    return any(t0 < a1 + gap_s and a0 - gap_s < t1 for a0, a1 in avoid)
 
 
 def pick_windows(t: np.ndarray, err: np.ndarray, win_s: float = 5.0,
@@ -104,17 +109,17 @@ def frame_times(t0: float, t1: float, n: int = N_FRAMES) -> np.ndarray:
 
 def run_windows(run_id: str, sequence: str, t: np.ndarray, err: np.ndarray, *,
                 injected: bool, win_s: float = 5.0, top_k: int = 8, control_k: int = 5,
-                avoid=()) -> list[dict]:
+                avoid=(), gap_s: float = 0.0) -> list[dict]:
     """Windows of one run as metadata rows (no sheet yet).
 
     Natural runs give top_k worst + control_k best. Injected runs give top_k worst only,
     labelled 'injected': a faulted run's best windows are not a clean control. With `avoid`
     ((t0, t1) intervals: the natural and control windows of the same sequence), an injected
-    run skips every overlapping window and takes the next-worst, so a labeler never sees the
-    same moment clean and faulted. Fewer than top_k may remain; the caller reports that."""
+    run skips every window that overlaps one of them or lies closer than gap_s, and takes the
+    next-worst, so a labeler never sees the same moment clean and faulted. Fewer than top_k may remain; the caller reports that."""
     if injected and avoid:
         rows = [dict(r, source="natural") for r in rank_windows(t, err, win_s)
-                if not overlaps(r["t0"], r["t1"], avoid)][:top_k]
+                if not overlaps(r["t0"], r["t1"], avoid, gap_s)][:top_k]
     else:
         rows = pick_windows(t, err, win_s, top_k, 0 if injected else control_k)
     out = []

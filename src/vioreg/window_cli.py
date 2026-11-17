@@ -132,7 +132,7 @@ def injected_runs(repo: Path, data_root: Path, manifest: Path, seqs=None,
 
 
 def plan(runs, win_s, top_k, inj_top_k, control_k, align="posyaw", skip_s=0.0,
-         trim_start_s=W.TRIM_START_S):
+         trim_start_s=W.TRIM_START_S, inj_gap_s=W.INJ_GAP_S):
     """-> (rows, skipped). rows = metadata rows; skipped = [(run_id, reason)]."""
     rows, skipped = [], []
     avoid: dict[str, list] = {}  # sequence -> natural/control intervals (natural runs come first)
@@ -152,12 +152,14 @@ def plan(runs, win_s, top_k, inj_top_k, control_k, align="posyaw", skip_s=0.0,
         k = inj_top_k if r["injected"] else top_k
         ws = W.run_windows(r["run_id"], r["sequence"], t, err, injected=r["injected"],
                            win_s=win_s, top_k=k, control_k=control_k,
-                           avoid=avoid.get(r["sequence"], ()) if r["injected"] else ())
+                           avoid=avoid.get(r["sequence"], ()) if r["injected"] else (),
+                           gap_s=inj_gap_s)
         if not r["injected"]:
             avoid.setdefault(r["sequence"], []).extend((w["t0"], w["t1"]) for w in ws)
         elif len(ws) < k:
             print(f"window_cli: NOTE {r['run_id']}: only {len(ws)} of {k} injected windows "
-                  f"(the rest overlap natural/control windows of {r['sequence']})",
+                  f"(the rest overlap or are within {inj_gap_s:g} s of natural/control "
+                  f"windows of {r['sequence']})",
                   file=sys.stderr)
         for w in ws:
             rows.append(dict(w, _bag=r["bag"], _run=r["run_id"]))
@@ -273,6 +275,9 @@ def _parser():
     p.add_argument("--inj-top-k", type=int, default=3, help="worst windows per faulted run")
     p.add_argument("--skip-s", type=float, default=0.0,
                    help="passed to ATE: seconds from GROUND-TRUTH start (the gate's skip_s)")
+    p.add_argument("--inj-gap-s", type=float, default=W.INJ_GAP_S,
+                   help="minimum seconds between an injected window and any natural or "
+                        "control window of the same sequence (0 = only no overlap)")
     p.add_argument("--trim-start-s", type=float, default=W.TRIM_START_S,
                    help="drop this many seconds after each run's FIRST POSE before cutting "
                         "windows (start-up transient); not the gate's skip_s")
@@ -292,6 +297,8 @@ def _parser():
 def main(argv=None, extract=docker_extract) -> int:
     ap = _parser()
     a = ap.parse_args(argv)
+    if a.inj_gap_s < 0:
+        ap.error("--inj-gap-s must be >= 0")
     try:
         if a.fault:
             parse_faults(a.fault)
@@ -305,7 +312,7 @@ def main(argv=None, extract=docker_extract) -> int:
         runs += injected_runs(repo, data, repo / "labels" / "fault_manifest.csv", a.seqs,
                               faults=a.fault)
     rows, skipped = plan(runs, a.win_s, a.top_k, a.inj_top_k, a.control_k, skip_s=a.skip_s,
-                         trim_start_s=a.trim_start_s)
+                         trim_start_s=a.trim_start_s, inj_gap_s=a.inj_gap_s)
     labels = repo / "labels"
     sheets = labels / "sheets"
     csvs = (labels / "windows.csv", labels / "windows_ui.csv")

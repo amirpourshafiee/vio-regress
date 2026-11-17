@@ -41,8 +41,9 @@ def _fake_extract(bag, request, work):
 
 @pytest.fixture
 def repo(tmp_path):
-    """MH_01_easy with a clean run1 + a spike, plus one faulted copy and an identity row."""
-    t = np.arange(100.0, 160.0, 0.05)
+    """MH_01_easy with a clean run1 + a spike, plus one faulted copy and an identity row.
+    120 s long: after the 15 s trim, room for injected windows that keep the 5 s gap."""
+    t = np.arange(100.0, 220.0, 0.05)
     gt = _circle(t)
     _write_gt(tmp_path / "data/euroc/MH_01_easy" / W_GT, gt)
     (tmp_path / "data/euroc/MH_01_easy/MH_01_easy.bag").write_bytes(b"")
@@ -249,7 +250,7 @@ def _sheet_ids(repo):
 
 # fix 3: only EuRoC sequence folders are natural runs
 def test_natural_runs_ignore_folders_that_are_not_sequences(repo):
-    t = np.arange(100.0, 160.0, 0.05)
+    t = np.arange(100.0, 220.0, 0.05)
     for d in ("s1", "variance/MH_01_easy", "faults", "sensitivity", "MH_01_easy_old", "mh_01_easy"):
         (repo / "results" / d).mkdir(parents=True, exist_ok=True)
         save_tum(_circle(t), repo / "results" / d / "run1.tum")
@@ -429,7 +430,7 @@ def test_reuse_sheets_with_no_windows_fails_and_removes_old_csvs(repo):
 
 # --fault: restrict injected runs to the agreed fault set (S6 left 14 faults per sequence)
 def _add_fault_run(repo, rid, fault, params):
-    t = np.arange(100.0, 160.0, 0.05)
+    t = np.arange(100.0, 220.0, 0.05)
     d = repo / f"results/faults/{rid}/MH_01_easy"
     d.mkdir(parents=True)
     save_tum(_circle(t), d / "run1.tum")
@@ -530,9 +531,9 @@ def test_plan_injected_windows_never_overlap_natural_or_control(repo):
 
 
 def test_plan_reports_a_short_injected_run(repo, capsys):
-    # 12 windows of 5 s; natural 5 + control 5 leave 2 free; ask for 4 injected
-    rc = _cli(repo, "--dry-run", "--top-k", "5", "--control-k", "5", "--inj-top-k", "4",
-              "--trim-start-s", "0")
+    # 24 windows of 5 s; natural 11 + control 11 leave 2 free; ask for 4 injected
+    rc = _cli(repo, "--dry-run", "--top-k", "11", "--control-k", "11", "--inj-top-k", "4",
+              "--trim-start-s", "0", "--inj-gap-s", "0")
     out = capsys.readouterr()
     assert rc == 0
     assert "MH_01_easy__blur_length9: only 2 of 4 injected windows" in out.err
@@ -553,12 +554,19 @@ def test_trim_start_is_not_the_gate_skip_s():
 
 
 def test_no_window_starts_inside_the_trimmed_start(repo):
-    runs = (cli.natural_runs(repo / "data/euroc", repo / "results")
-            + cli.injected_runs(repo, repo / "data/euroc", repo / "labels/fault_manifest.csv"))
-    rows, _ = cli.plan(runs, 5.0, 3, 2, 2)
+    """A start-up spike (the worst error of the run) is kept out by the trim only."""
+    from vioreg.euroc_io import load_tum
+    tum = repo / "results/MH_01_easy/run1.tum"
+    tr = load_tum(tum)
+    p = tr.p.copy()
+    p[(tr.t >= 101) & (tr.t < 104)] += 2.0
+    save_tum(Trajectory(tr.t, p, tr.q), tum)
+    runs = cli.natural_runs(repo / "data/euroc", repo / "results")
+    rows, _ = cli.plan(runs, 5.0, 3, 0, 2)
     assert min(r["t0"] for r in rows) >= 100.0 + 15.0  # fixture runs start at t=100
-    rows0, _ = cli.plan(runs, 5.0, 3, 2, 2, trim_start_s=0.0)
-    assert min(r["t0"] for r in rows0) == 100.0
+    rows0, _ = cli.plan(runs, 5.0, 3, 0, 2, trim_start_s=0.0)
+    worst = max(rows0, key=lambda r: r["peak_err_m"])
+    assert worst["t0"] == 100.0 and worst["source"] == "natural"
 
 
 def test_trim_start_cuts_the_error_series():
@@ -568,3 +576,59 @@ def test_trim_start_cuts_the_error_series():
     assert t2[0] >= 15.0 and len(t2) == len(e2) and np.all(e2 == err[t >= 15.0])
     t3, _ = W.trim_start(t, err, 0.0)
     assert len(t3) == len(t)
+
+
+# minimum gap (owner, 2026-11-17): injected windows stay >= INJ_GAP_S from natural/control
+def _gap(a, b):
+    """Seconds between two windows; 0 if they touch, negative if they overlap."""
+    return max(a["t0"] - b["t1"], b["t0"] - a["t1"])
+
+
+def test_inj_gap_default_is_one_window_length():
+    assert W.INJ_GAP_S == 5.0
+    assert cli._parser().parse_args([]).inj_gap_s == W.INJ_GAP_S
+
+
+def test_run_windows_gap_rejects_windows_closer_than_gap():
+    t = np.arange(0, 60, 0.05)
+    err = np.full_like(t, 0.05)
+    err[(t >= 30) & (t < 35)] = 0.9   # touches avoided 25-30: 0 s away -> rejected
+    err[(t >= 35) & (t < 40)] = 0.8   # exactly 5 s after 30 -> allowed
+    err[(t >= 20) & (t < 25)] = 0.85  # touches 25 from below: 0 s -> rejected
+    rows = W.run_windows("b", "S", t, err, injected=True, top_k=1, control_k=0,
+                         avoid=[(25.0, 30.0)], gap_s=5.0)
+    assert [r["t0"] for r in rows] == [35.0]
+
+
+def test_run_windows_gap_zero_keeps_the_touching_rule():
+    t = np.arange(0, 60, 0.05)
+    err = np.full_like(t, 0.05)
+    err[(t >= 30) & (t < 35)] = 0.9
+    rows = W.run_windows("b", "S", t, err, injected=True, top_k=1, control_k=0,
+                         avoid=[(25.0, 30.0)], gap_s=0.0)
+    assert [r["t0"] for r in rows] == [30.0]
+
+
+def test_plan_injected_windows_keep_the_gap_by_default(repo):
+    runs = (cli.natural_runs(repo / "data/euroc", repo / "results")
+            + cli.injected_runs(repo, repo / "data/euroc", repo / "labels/fault_manifest.csv"))
+    rows, _ = cli.plan(runs, 5.0, 2, 2, 1, trim_start_s=0.0)
+    nat = [r for r in rows if r["source"] in ("natural", "control")]
+    inj = [r for r in rows if r["source"] == "injected"]
+    assert inj, "fixture leaves room for injected windows"
+    assert all(_gap(i, n) >= W.INJ_GAP_S - 1e-9 for i in inj for n in nat)
+
+
+def test_gap_shortfall_prints_the_same_note(repo, capsys):
+    import re
+    _cli(repo, "--dry-run", "--top-k", "11", "--control-k", "11", "--inj-top-k", "4",
+         "--trim-start-s", "0")
+    err = capsys.readouterr().err
+    m = re.search(r"NOTE MH_01_easy__blur_length9: only (\d) of 4 injected windows", err)
+    assert m and int(m.group(1)) < 2, "the gap leaves fewer than the 2 free windows"
+    assert "within 5 s" in err
+
+
+def test_negative_gap_is_refused(repo):
+    with pytest.raises(SystemExit):
+        _cli(repo, "--dry-run", "--inj-gap-s", "-1")

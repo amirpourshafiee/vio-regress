@@ -24,7 +24,9 @@ an unlisted EuRoC sequence with the defaults (`align` from `defaults`, `skip_s` 
 before, and the gate still fails any sequence it has no baseline for.
 
 **No repeated moments.** An injected window never overlaps in time a natural or control window
-of the same sequence. The injected run takes its next-worst window that does not overlap. If
+of the same sequence, and stays at least `--inj-gap-s` (default `windows.INJ_GAP_S` = 5 s, one
+window length) away from each of them. Without the gap, adjacent windows showed the same scene
+clean and then faulted. The injected run takes its next-worst window that keeps the gap. If
 fewer than `--inj-top-k` are left, it uses what exists and prints
 `NOTE <run_id>: only N of K injected windows`. Injected windows of different faults may still
 overlap one another.
