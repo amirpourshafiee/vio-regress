@@ -98,6 +98,12 @@ copies with `fault_cli` but skip the two run/score lines.
 The expected labels (blur = motion_blur, gamma = illumination, time-offset = no_visual_cause)
 are only for judging the judge afterwards. Labeling stays blind.
 
-**Not yet done.** No real window set exists: it needs all 11 sequences scored and the faulted
-runs on every sequence, which run in Codespaces. Tested here with fake bags only; the
-rosbag path in `bagframes.extract` has not run against a real bag.
+**First real set (2026-11-17, all 11 sequences, gap 0).** `--reuse-sheets` with the three
+faults and `--trim-start-s 15`: 213 windows from 38 runs, 88 natural, 70 injected, 55 control
+(25.8 % controls), no SKIPPED lines, no warnings. Every run gave poses, including the
+difficult sequences. Injected windows fall short of 99 (11 x 9) on the short sequences, where the
+8 natural and 5 control windows fill most or all of the timeline after the 15 s trim:
+MH_04_difficult 0, V1_02_medium 0, V1_03_difficult 3, MH_05_difficult 5, V2_03_difficult 8,
+all others 9. Thresholds and window counts were not changed to fill the gap. Sheets were cut
+from real bags inside the pinned image (`bagframes.extract`), one sequence at a time. The
+sheets and the two window CSVs are not committed (regenerable; sheets are gitignored).
