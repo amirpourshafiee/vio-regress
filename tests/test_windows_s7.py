@@ -42,7 +42,7 @@ def _fake_extract(bag, request, work):
 @pytest.fixture
 def repo(tmp_path):
     """MH_01_easy with a clean run1 + a spike, plus one faulted copy and an identity row.
-    120 s long: after the 15 s trim, room for injected windows that keep the 5 s gap."""
+    120 s long: after the 15 s trim, room for injected windows (also with a 5 s gap)."""
     t = np.arange(100.0, 220.0, 0.05)
     gt = _circle(t)
     _write_gt(tmp_path / "data/euroc/MH_01_easy" / W_GT, gt)
@@ -578,14 +578,15 @@ def test_trim_start_cuts_the_error_series():
     assert len(t3) == len(t)
 
 
-# minimum gap (owner, 2026-11-17): injected windows stay >= INJ_GAP_S from natural/control
+# gap (owner, 2026-11-17): default 0 = no overlap only. A 5 s default left no room on the
+# 83-150 s sequences (MH_03_medium: 1 of 9 injected windows); --inj-gap-s can still raise it.
 def _gap(a, b):
     """Seconds between two windows; 0 if they touch, negative if they overlap."""
     return max(a["t0"] - b["t1"], b["t0"] - a["t1"])
 
 
-def test_inj_gap_default_is_one_window_length():
-    assert W.INJ_GAP_S == 5.0
+def test_inj_gap_default_is_zero_no_overlap_only():
+    assert W.INJ_GAP_S == 0.0
     assert cli._parser().parse_args([]).inj_gap_s == W.INJ_GAP_S
 
 
@@ -609,20 +610,45 @@ def test_run_windows_gap_zero_keeps_the_touching_rule():
     assert [r["t0"] for r in rows] == [30.0]
 
 
-def test_plan_injected_windows_keep_the_gap_by_default(repo):
-    runs = (cli.natural_runs(repo / "data/euroc", repo / "results")
+def _fixture_runs(repo):
+    return (cli.natural_runs(repo / "data/euroc", repo / "results")
             + cli.injected_runs(repo, repo / "data/euroc", repo / "labels/fault_manifest.csv"))
-    rows, _ = cli.plan(runs, 5.0, 2, 2, 1, trim_start_s=0.0)
-    nat = [r for r in rows if r["source"] in ("natural", "control")]
-    inj = [r for r in rows if r["source"] == "injected"]
+
+
+def _split(rows):
+    return ([r for r in rows if r["source"] in ("natural", "control")],
+            [r for r in rows if r["source"] == "injected"])
+
+
+def test_plan_injected_windows_never_overlap_by_default(repo):
+    rows, _ = cli.plan(_fixture_runs(repo), 5.0, 2, 2, 1, trim_start_s=0.0)
+    nat, inj = _split(rows)
     assert inj, "fixture leaves room for injected windows"
-    assert all(_gap(i, n) >= W.INJ_GAP_S - 1e-9 for i in inj for n in nat)
+    assert all(_gap(i, n) >= -1e-9 for i in inj for n in nat)
+
+
+def test_plan_explicit_gap_is_still_kept(repo):
+    rows, _ = cli.plan(_fixture_runs(repo), 5.0, 2, 2, 1, trim_start_s=0.0, inj_gap_s=5.0)
+    nat, inj = _split(rows)
+    assert inj, "fixture leaves room for injected windows"
+    assert all(_gap(i, n) >= 5.0 - 1e-9 for i in inj for n in nat)
+
+
+def test_default_gap_fills_a_crowded_sequence_that_a_5s_gap_starves(repo, capsys):
+    # 120 s fixture, 13 natural/control windows: the MH_03_medium situation in miniature
+    args = ("--dry-run", "--top-k", "8", "--control-k", "5", "--inj-top-k", "3")
+    _cli(repo, *args, "--inj-gap-s", "5")
+    starved = capsys.readouterr().err
+    _cli(repo, *args)
+    default = capsys.readouterr().err
+    assert "NOTE MH_01_easy__blur_length9" in starved
+    assert "NOTE MH_01_easy__blur_length9" not in default
 
 
 def test_gap_shortfall_prints_the_same_note(repo, capsys):
     import re
     _cli(repo, "--dry-run", "--top-k", "11", "--control-k", "11", "--inj-top-k", "4",
-         "--trim-start-s", "0")
+         "--trim-start-s", "0", "--inj-gap-s", "5")
     err = capsys.readouterr().err
     m = re.search(r"NOTE MH_01_easy__blur_length9: only (\d) of 4 injected windows", err)
     assert m and int(m.group(1)) < 2, "the gap leaves fewer than the 2 free windows"

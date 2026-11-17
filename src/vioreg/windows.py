@@ -30,9 +30,11 @@ ID_SALT = "vioreg-windows-v1"
 # gated sequences (docs/crosscheck.md); the two are different quantities.
 TRIM_START_S = 15.0
 # Minimum time between an injected window and any natural or control window of the same
-# sequence (one window length). Without it, adjacent windows showed the same scene clean and
-# faulted (S7 Stage 1, MH_01_easy: gamma 89.7 s right after control 84.7-89.7 s).
-INJ_GAP_S = 5.0
+# sequence. 0 = they never overlap, but may touch. A 5 s gap (one window length) was tried to
+# avoid the same scene clean and then faulted (S7 Stage 1, MH_01_easy: gamma 89.7 s right
+# after control 84.7-89.7 s), but on the 83-150 s sequences it left no room: MH_03_medium got
+# 1 of 9 injected windows. --inj-gap-s can still raise it.
+INJ_GAP_S = 0.0
 
 
 def rank_windows(t: np.ndarray, err: np.ndarray, win_s: float = 5.0) -> list[dict]:

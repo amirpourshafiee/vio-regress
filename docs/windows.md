@@ -24,12 +24,14 @@ an unlisted EuRoC sequence with the defaults (`align` from `defaults`, `skip_s` 
 before, and the gate still fails any sequence it has no baseline for.
 
 **No repeated moments.** An injected window never overlaps in time a natural or control window
-of the same sequence, and stays at least `--inj-gap-s` (default `windows.INJ_GAP_S` = 5 s, one
-window length) away from each of them. Without the gap, adjacent windows showed the same scene
-clean and then faulted. The injected run takes its next-worst window that keeps the gap. If
-fewer than `--inj-top-k` are left, it uses what exists and prints
-`NOTE <run_id>: only N of K injected windows`. Injected windows of different faults may still
-overlap one another.
+of the same sequence (touching is allowed). `--inj-gap-s` (default `windows.INJ_GAP_S` = 0)
+can add a minimum distance on top. A 5 s default was tried first, so that adjacent windows
+would not show the same scene clean and then faulted (Stage 1, MH_01_easy). It was dropped on
+2026-11-17: 13 natural/control windows with 5 s on each side block up to 195 s, and the
+sequences are 83 to 150 s long. MH_03_medium got 1 of 9 injected windows. The injected run
+takes its next-worst window that keeps the rule. If fewer than `--inj-top-k` are left, it uses
+what exists and prints `NOTE <run_id>: only N of K injected windows`. Injected windows of
+different faults may still overlap one another.
 
 **Blind labeling.** The UI reads only `windows_ui.csv` (`window_id`, `sheet`). Window ids are
 salted hashes and sheet files are named by id. `windows.csv` has no fault column, and the run id
