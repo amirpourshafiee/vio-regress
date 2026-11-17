@@ -481,3 +481,58 @@ def test_fault_filter_reaches_the_final_step(repo):
 def test_bad_fault_spec_is_refused(repo):
     with pytest.raises(SystemExit):
         _cli(repo, "--dry-run", "--fault", "blur=25;rm")
+
+
+# decision 2 (2026-11-17): injected windows never overlap natural/control windows in time
+def _overlap(a, b):
+    return a["t0"] < b["t1"] and b["t0"] < a["t1"]
+
+
+def test_run_windows_avoid_takes_next_worst_non_overlapping():
+    t = np.arange(0, 60, 0.05)
+    err = np.full_like(t, 0.05)
+    err[(t >= 30) & (t < 35)] = 0.9   # worst
+    err[(t >= 10) & (t < 15)] = 0.5   # second
+    err[(t >= 50) & (t < 55)] = 0.3   # third
+    rows = W.run_windows("b", "S", t, err, injected=True, top_k=2, control_k=0,
+                         avoid=[(31.0, 36.0)])
+    assert [r["t0"] for r in rows] == [10.0, 50.0]
+
+
+def test_run_windows_avoid_touching_edges_is_not_overlap():
+    t = np.arange(0, 60, 0.05)
+    err = np.full_like(t, 0.05)
+    err[(t >= 30) & (t < 35)] = 0.9
+    rows = W.run_windows("b", "S", t, err, injected=True, top_k=1, control_k=0,
+                         avoid=[(25.0, 30.0), (35.0, 40.0)])
+    assert [r["t0"] for r in rows] == [30.0]
+
+
+def test_run_windows_avoid_returns_fewer_when_nothing_is_left():
+    t = np.arange(0, 20, 0.05)          # 4 windows
+    err = np.linspace(0, 1, len(t))
+    rows = W.run_windows("b", "S", t, err, injected=True, top_k=3, control_k=0,
+                         avoid=[(0.0, 10.0), (12.0, 13.0)])
+    assert [r["t0"] for r in rows] == [15.0]  # 0-5, 5-10, 10-15 overlap; only 15-20 is free
+
+
+def test_plan_injected_windows_never_overlap_natural_or_control(repo):
+    """Fixture: the blur run has the SAME error as the natural run, so without the rule its
+    worst windows would be exactly the natural ones."""
+    runs = (cli.natural_runs(repo / "data/euroc", repo / "results")
+            + cli.injected_runs(repo, repo / "data/euroc", repo / "labels/fault_manifest.csv"))
+    rows, skipped = cli.plan(runs, 5.0, 3, 2, 2)
+    assert skipped == []
+    nat = [r for r in rows if r["source"] in ("natural", "control")]
+    inj = [r for r in rows if r["source"] == "injected"]
+    assert len(inj) == 2
+    assert not any(_overlap(i, n) for i in inj for n in nat)
+
+
+def test_plan_reports_a_short_injected_run(repo, capsys):
+    # 12 windows of 5 s; natural 5 + control 5 leave 2 free; ask for 4 injected
+    rc = _cli(repo, "--dry-run", "--top-k", "5", "--control-k", "5", "--inj-top-k", "4")
+    out = capsys.readouterr()
+    assert rc == 0
+    assert "MH_01_easy__blur_length9: only 2 of 4 injected windows" in out.err
+    assert "overlap" in out.err

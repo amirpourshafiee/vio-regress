@@ -10,6 +10,12 @@ best windows. `injected`: the 3 worst windows of each faulted copy in `labels/fa
 windows with about 20 to 25 percent controls, and the CLI warns when the set misses that.
 Only run1 of a sequence is used (`--all-runs` lifts it): serial repeats are near-duplicates.
 
+**No repeated moments.** An injected window never overlaps in time a natural or control window
+of the same sequence. The injected run takes its next-worst window that does not overlap. If
+fewer than `--inj-top-k` are left, it uses what exists and prints
+`NOTE <run_id>: only N of K injected windows`. Injected windows of different faults may still
+overlap one another.
+
 **Blind labeling.** The UI reads only `windows_ui.csv` (`window_id`, `sheet`). Window ids are
 salted hashes and sheet files are named by id. `windows.csv` has no fault column, and the run id
 of a faulted run is an opaque `<seq>__inj-<hash>`, because the real id embeds the fault. The

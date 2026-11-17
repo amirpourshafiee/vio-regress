@@ -26,14 +26,8 @@ UI_FIELDS = ["window_id", "sheet"]
 ID_SALT = "vioreg-windows-v1"
 
 
-def pick_windows(t: np.ndarray, err: np.ndarray, win_s: float = 5.0,
-                 top_k: int = 10, control_k: int = 5) -> list[dict]:
-    """Split the run into consecutive win_s windows, rank by peak error.
-
-    Returns the top_k worst windows (source='natural') plus control_k of the best
-    windows (source='control'). Controls matter: a judge that always says
-    'there is a visual problem' must be caught by windows where nothing went wrong.
-    """
+def rank_windows(t: np.ndarray, err: np.ndarray, win_s: float = 5.0) -> list[dict]:
+    """Consecutive win_s windows (5+ poses each), worst peak error first."""
     edges = np.arange(t[0], t[-1], win_s)
     rows = []
     for a in edges:
@@ -42,6 +36,23 @@ def pick_windows(t: np.ndarray, err: np.ndarray, win_s: float = 5.0,
             continue
         rows.append({"t0": float(a), "t1": float(a + win_s), "peak_err_m": float(err[m].max())})
     rows.sort(key=lambda r: r["peak_err_m"], reverse=True)
+    return rows
+
+
+def overlaps(t0: float, t1: float, avoid) -> bool:
+    """[t0, t1) overlaps any (a0, a1) in avoid; windows that only touch do not overlap."""
+    return any(t0 < a1 and a0 < t1 for a0, a1 in avoid)
+
+
+def pick_windows(t: np.ndarray, err: np.ndarray, win_s: float = 5.0,
+                 top_k: int = 10, control_k: int = 5) -> list[dict]:
+    """Split the run into consecutive win_s windows, rank by peak error.
+
+    Returns the top_k worst windows (source='natural') plus control_k of the best
+    windows (source='control'). Controls matter: a judge that always says
+    'there is a visual problem' must be caught by windows where nothing went wrong.
+    """
+    rows = rank_windows(t, err, win_s)
     worst = [dict(r, source="natural") for r in rows[:top_k]]
     best = [dict(r, source="control") for r in rows[::-1][:control_k]]
     return worst + best
@@ -78,12 +89,20 @@ def frame_times(t0: float, t1: float, n: int = N_FRAMES) -> np.ndarray:
 
 
 def run_windows(run_id: str, sequence: str, t: np.ndarray, err: np.ndarray, *,
-                injected: bool, win_s: float = 5.0, top_k: int = 8, control_k: int = 5) -> list[dict]:
+                injected: bool, win_s: float = 5.0, top_k: int = 8, control_k: int = 5,
+                avoid=()) -> list[dict]:
     """Windows of one run as metadata rows (no sheet yet).
 
     Natural runs give top_k worst + control_k best. Injected runs give top_k worst only,
-    labelled 'injected': a faulted run's best windows are not a clean control."""
-    rows = pick_windows(t, err, win_s, top_k, 0 if injected else control_k)
+    labelled 'injected': a faulted run's best windows are not a clean control. With `avoid`
+    ((t0, t1) intervals: the natural and control windows of the same sequence), an injected
+    run skips every overlapping window and takes the next-worst, so a labeler never sees the
+    same moment clean and faulted. Fewer than top_k may remain; the caller reports that."""
+    if injected and avoid:
+        rows = [dict(r, source="natural") for r in rank_windows(t, err, win_s)
+                if not overlaps(r["t0"], r["t1"], avoid)][:top_k]
+    else:
+        rows = pick_windows(t, err, win_s, top_k, 0 if injected else control_k)
     out = []
     for r in rows:
         src = "injected" if injected and r["source"] == "natural" else r["source"]

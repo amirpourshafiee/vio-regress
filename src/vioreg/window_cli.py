@@ -134,7 +134,8 @@ def injected_runs(repo: Path, data_root: Path, manifest: Path, seqs=None,
 def plan(runs, win_s, top_k, inj_top_k, control_k, align="posyaw", skip_s=0.0):
     """-> (rows, skipped). rows = metadata rows; skipped = [(run_id, reason)]."""
     rows, skipped = [], []
-    for r in runs:
+    avoid: dict[str, list] = {}  # sequence -> natural/control intervals (natural runs come first)
+    for r in sorted(runs, key=lambda r: r["injected"]):  # stable: natural runs before injected
         if r.get("problem"):
             skipped.append((r["run_id"], r["problem"]))
             continue
@@ -144,9 +145,17 @@ def plan(runs, win_s, top_k, inj_top_k, control_k, align="posyaw", skip_s=0.0):
         except Exception as e:  # noqa: BLE001 - reported, never silent
             skipped.append((r["run_id"], str(e)))
             continue
-        for w in W.run_windows(r["run_id"], r["sequence"], t, err, injected=r["injected"],
-                               win_s=win_s, top_k=inj_top_k if r["injected"] else top_k,
-                               control_k=control_k):
+        k = inj_top_k if r["injected"] else top_k
+        ws = W.run_windows(r["run_id"], r["sequence"], t, err, injected=r["injected"],
+                           win_s=win_s, top_k=k, control_k=control_k,
+                           avoid=avoid.get(r["sequence"], ()) if r["injected"] else ())
+        if not r["injected"]:
+            avoid.setdefault(r["sequence"], []).extend((w["t0"], w["t1"]) for w in ws)
+        elif len(ws) < k:
+            print(f"window_cli: NOTE {r['run_id']}: only {len(ws)} of {k} injected windows "
+                  f"(the rest overlap natural/control windows of {r['sequence']})",
+                  file=sys.stderr)
+        for w in ws:
             rows.append(dict(w, _bag=r["bag"], _run=r["run_id"]))
     return rows, skipped
 
