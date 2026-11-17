@@ -19,6 +19,56 @@ mapping back is `fault_manifest.csv`.
 network, bag read-only, nearest `/cam0/image_raw` frame to each of 12 evenly spaced times),
 written as PGM to a scratch directory, composed here, then deleted.
 
+**Inputs and checks.** Natural runs are `results/<seq>/run1.tum`, only for folders named like a
+EuRoC sequence (`^(MH|V1|V2)_0[1-5]_[a-z]+$`), so `results/s1`, `results/variance` and so on are
+ignored. Faulted runs are `results/faults/<run_id>/<seq>/run1.tum` (the path `fault_cli` prints).
+A manifest row with no results there, a duplicate row, a run with no scorable poses, or a
+missing bag is printed as `SKIPPED <run_id>: <reason>`. It is never dropped silently. The set
+is then smaller, and the final `check_set` warnings say so.
+
+**All 11 sequences (disk does not hold every bag at once).** Do one sequence at a time, then
+one final step:
+
+1. For each sequence, with its bags present: `--sheets-only --seqs <SEQ>`. This cuts the
+   missing sheets, keeps the valid ones, and writes no CSVs. It can resume: re-running it cuts
+   only what is missing or truncated. Sheets are written to a temp name and renamed.
+2. Delete that sequence's bags.
+3. At the end: `--reuse-sheets`. This needs no bags and no Docker. If any window lacks a valid
+   sheet (missing, truncated, or new ids after a re-run moved the worst windows), it exits 1,
+   writes no CSVs and removes old ones. A sheet whose id is not in the set gets a warning and
+   never enters the set.
+
+Fault set (S7, decided 2026-11-17): `blur --length 25`, `gamma --gamma 2.2`,
+`time-offset --offset-ms 100` on every sequence. That is 3 runs x 3 windows, plus 8 natural and
+5 control windows per sequence: at most 242 windows with 22.7 % controls. drop-frames was left
+out: nothing in the frames shows it, and it would put controls at exactly 20.0 %. Take run ids
+from `fault_cli`, never retype them. The last line of `--print-data-root` is the copy's DATA
+root, and its folder name is the run id. Rebuilding a deleted copy (S6 sequences) does not
+add a second manifest row.
+
+```bash
+set -euo pipefail   # a failed fault_cli must stop the loop, not yield an empty RID
+PY=.venv/bin/python; S=MH_02_easy
+scripts/fetch_euroc.sh data/euroc "$S"
+RUNS=1 MODE=serial bash scripts/run_sequence.sh "$S" results
+$PY -m vioreg.score --seqs "$S" --out results --data data/euroc
+for f in "blur --length 25" "gamma --gamma 2.2" "time-offset --offset-ms 100"; do
+  D=$($PY -m vioreg.fault_cli $f --seq "$S" --print-data-root | tail -n1); RID=$(basename "$D")
+  [ -f "$D/$S/$S.bag" ] || { echo "no faulted bag for $f"; exit 1; }
+  RUNS=1 MODE=serial DATA="$D" bash scripts/run_sequence.sh "$S" "results/faults/$RID"
+  $PY -m vioreg.score --seqs "$S" --out "results/faults/$RID" --data data/euroc
+done
+$PY -m vioreg.window_cli --sheets-only --seqs "$S"
+# then delete data/euroc/$S/$S.bag and data/faulted/${S}__*; after all 11:
+$PY -m vioreg.window_cli --reuse-sheets
+```
+
+For MH_01_easy, V1_01_easy and MH_03_medium the fault runs already exist from S6: rebuild the
+copies with `fault_cli` but skip the two run/score lines.
+
+The expected labels (blur = motion_blur, gamma = illumination, time-offset = no_visual_cause)
+are only for judging the judge afterwards. Labeling stays blind.
+
 **Not yet done.** No real window set exists: it needs all 11 sequences scored and the faulted
 runs on every sequence, which run in Codespaces. Tested here with fake bags only; the
 rosbag path in `bagframes.extract` has not run against a real bag.

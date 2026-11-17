@@ -204,3 +204,43 @@ def test_spec_subcommand_creates_the_same_copy_and_prints_its_data_root(repo, ca
 def test_spec_subcommand_refuses_a_bad_spec(repo):
     assert call(repo, ["spec", "blur=9;rm -rf /", "--seq", "MH_01_easy"]) == 2
     assert not any((repo / "data" / "faulted").iterdir())
+
+
+# ---------------------------------------------------------------- S7: rebuilding a deleted copy
+def test_rebuilding_a_deleted_copy_does_not_duplicate_its_manifest_row(repo):
+    import shutil
+    argv = ["blur", "--length", "25", "--seq", "MH_01_easy"]
+    assert call(repo, argv) == 0
+    shutil.rmtree(repo / "data/faulted/MH_01_easy__blur_length25")  # bag deleted after S7 sheets
+    assert fc.main(argv, repo_root=repo, apply=fake_apply(),
+                   now=lambda: "2026-11-18T09:00:00Z") == 0, "rebuild succeeds"
+    rows = manifest_rows(repo)
+    assert len(rows) == 1, "identical row (created_utc ignored) is not appended again"
+    assert rows[0]["created_utc"] == "2026-11-14T12:00:00Z", "first row kept as written"
+    assert (repo / "data/faulted/MH_01_easy__blur_length25/MH_01_easy/MH_01_easy.bag").exists()
+
+
+@pytest.mark.parametrize("field, value", [("sequence", "V1_01_easy"), ("fault", "gamma"),
+                                          ("params", '{"length": 9}'), ("seed", "3")])
+def test_a_conflicting_row_for_the_same_run_id_is_refused_before_any_copy(repo, field, value):
+    (repo / "labels").mkdir()
+    row = {"run_id": "MH_01_easy__blur_length25", "sequence": "MH_01_easy", "fault": "blur",
+           "params": json.dumps({"length": 25}, sort_keys=True), "seed": "0", "created_utc": "x"}
+    row[field] = value
+    with open(repo / "labels" / "fault_manifest.csv", "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=fc.MANIFEST_FIELDS, lineterminator="\n")
+        w.writeheader()
+        w.writerow(row)
+    log = []
+    assert call(repo, ["blur", "--length", "25", "--seq", "MH_01_easy"], apply=fake_apply(log)) == 2
+    assert log == [] and not (repo / "data/faulted/MH_01_easy__blur_length25").exists()
+    assert len(manifest_rows(repo)) == 1
+
+
+def test_print_data_root_last_line_names_the_run_id_in_the_manifest(repo, capsys):
+    """The S7 script takes RID = basename of the last line; it must equal the manifest run_id."""
+    from pathlib import Path
+    assert call(repo, ["gamma", "--gamma", "2.2", "--seq", "MH_01_easy", "--print-data-root"]) == 0
+    last = capsys.readouterr().out.strip().splitlines()[-1]
+    assert Path(last).name == manifest_rows(repo)[-1]["run_id"]
+    assert (Path(last) / "MH_01_easy" / "MH_01_easy.bag").exists()
