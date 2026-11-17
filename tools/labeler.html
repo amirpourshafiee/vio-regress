@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>vioreg labeler</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+ :root{color-scheme:dark} body{margin:0;font:15px system-ui,sans-serif;background:#111;color:#ddd;display:flex;flex-direction:column;height:100vh}
+ header{display:flex;gap:16px;align-items:center;padding:8px 14px;background:#1b1b1b;border-bottom:1px solid #333}
+ header b{font-size:16px} #count{margin-left:auto;font-variant-numeric:tabular-nums}
+ main{flex:1;display:flex;min-height:0} #stage{flex:1;display:flex;align-items:center;justify-content:center;min-width:0;padding:8px}
+ #stage img{max-width:100%;max-height:100%;image-rendering:auto;background:#000}
+ aside{width:330px;padding:12px 14px;border-left:1px solid #333;overflow:auto;background:#161616}
+ .row{display:flex;gap:8px;margin:5px 0;align-items:baseline} kbd{background:#333;border-radius:4px;padding:1px 7px;font-family:monospace;min-width:14px;text-align:center}
+ .def{color:#999;font-size:13px;margin:0 0 6px 30px} textarea{width:100%;box-sizing:border-box;background:#222;color:#ddd;border:1px solid #444;border-radius:4px;height:54px}
+ button{background:#2d4f7c;color:#fff;border:0;border-radius:4px;padding:6px 12px;cursor:pointer} button.sec{background:#333}
+ #setup{margin:auto;max-width:560px;padding:24px} #setup li{margin:6px 0} .hide{display:none!important} .flash{outline:3px solid #4a8}
+ #msg{color:#e9b44c;font-size:13px;min-height:18px}
+</style></head><body>
+<header><b>vioreg labeler</b><span id="mode"></span><span id="msg"></span><span id="count"></span></header>
+<main>
+ <div id="setup">
+  <h2>Label windows blind</h2>
+  <ol>
+   <li>Pick the <code>labels/</code> folder of the repo (it must contain <code>windows_ui.csv</code> and <code>sheets/</code>). Only those are read; <code>windows.csv</code> is never opened.</li>
+   <li>Choose the pass, then label. Keys <kbd>1</kbd>-<kbd>6</kbd> label, <kbd>u</kbd> undoes, <kbd>s</kbd> skips, <kbd>n</kbd> edits notes (Esc leaves), <kbd>h</kbd> shows the codebook, <kbd>d</kbd> downloads.</li>
+   <li>Progress autosaves in this browser. Download the CSV often and when done.</li>
+  </ol>
+  <p><label>Pass <select id="pass"><option value="1">1: all windows</option><option value="2">2: random 40, label without looking at pass 1</option></select></label></p>
+  <p><input id="dir" type="file" webkitdirectory> <button class="sec" id="demo">Try with demo sheets</button></p>
+ </div>
+ <div id="stage" class="hide"><img id="img" alt="contact sheet"></div>
+ <aside id="panel" class="hide">
+  <div id="codes"></div>
+  <p><button class="sec" id="undo">Undo (u)</button> <button class="sec" id="skip">Skip (s)</button> <button id="dl">Download CSV (d)</button></p>
+  <label>Notes (n)<textarea id="notes" placeholder="optional"></textarea></label>
+  <p id="summary"></p>
+ </aside>
+</main>
+<script>
+"use strict";
+const LABELS = [
+ ["motion_blur","Fast motion smears the image","streaked edges across several consecutive frames"],
+ ["low_texture","Little to track","blank wall or floor fills most of the frame"],
+ ["illumination","Too dark, overexposed, flicker","washed out or crushed regions; brightness changes between frames"],
+ ["handling_event","Pick-up, set-down, carried","sudden view changes at sequence start or end (Machine Hall)"],
+ ["no_visual_cause","Frames look fine","suspect estimator, config or timing; controls should mostly land here"],
+ ["unclear","Ambiguous or mixed","use sparingly; its rate is tracked"]];
+const SEED = 20261114, PASS2_N = 40;
+const $ = id => document.getElementById(id);
+let ids = [], urls = {}, order = [], labels = {}, history = [], skipped = new Set(), cur = null, storeKey = "", pass = 1;
+
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+function shuffled(arr, seed){const r=mulberry32(seed),a=arr.slice();for(let i=a.length-1;i>0;i--){const j=Math.floor(r()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a}
+function hash(s){let h=5381;for(const c of s)h=(h*33^c.charCodeAt(0))>>>0;return h.toString(16)}
+function parseCSV(t){const rows=[];let row=[],f="",q=false;for(let i=0;i<t.length;i++){const c=t[i];
+  if(q){if(c=='"'&&t[i+1]=='"'){f+='"';i++}else if(c=='"')q=false;else f+=c}
+  else if(c=='"')q=true;else if(c==","){row.push(f);f=""}else if(c=="\n"||c=="\r"){if(c=="\r"&&t[i+1]=="\n")i++;row.push(f);f="";if(row.length>1||row[0]!=="")rows.push(row);row=[]}else f+=c}
+  if(f!==""||row.length){row.push(f);rows.push(row)}return rows}
+const esc = v => /[",\n\r]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v;
+function toCSV(){const rows=["window_id,label,labeled_at_utc,notes"];
+  for(const id of Object.keys(labels).sort()){const l=labels[id];rows.push([id,l.label,l.at,l.notes].map(esc).join(","))}return rows.join("\n")+"\n"}
+function msg(s){$("msg").textContent=s;if(s)setTimeout(()=>{if($("msg").textContent===s)$("msg").textContent=""},6000)}
+
+function save(){try{localStorage.setItem(storeKey,JSON.stringify({labels,history,skipped:[...skipped]}))}catch(e){msg("Autosave unavailable in this browser: download the CSV often.")}}
+function load(){try{const s=JSON.parse(localStorage.getItem(storeKey)||"null");if(s){labels=s.labels;history=s.history;skipped=new Set(s.skipped);msg("Restored "+Object.keys(labels).length+" saved labels.")}}catch(e){}}
+
+function start(idList, urlMap){
+  ids = idList; urls = urlMap; pass = +$("pass").value;
+  order = shuffled(ids.slice().sort(), SEED);
+  if(pass===2) order = shuffled(ids.slice().sort(), SEED+1).slice(0, Math.min(PASS2_N, ids.length));
+  storeKey = "vioreg-labeler:p"+pass+":"+hash(ids.slice().sort().join("|"));
+  load();
+  $("mode").textContent = "pass "+pass+(pass===2?" (second look)":"");
+  $("setup").classList.add("hide"); $("stage").classList.remove("hide"); $("panel").classList.remove("hide");
+  const c=$("codes");c.innerHTML="";LABELS.forEach(([n,m,e],i)=>{const d=document.createElement("div");d.innerHTML=
+    `<div class="row"><kbd>${i+1}</kbd><b>${n}</b></div><div class="def">${m}. ${e}.</div>`;c.append(d)});
+  next();
+}
+function next(){
+  $("notes").value="";
+  const open = order.filter(id=>!labels[id]);
+  const fresh = open.filter(id=>!skipped.has(id));
+  if(!fresh.length && open.length){skipped.clear()}
+  cur = (open.filter(id=>!skipped.has(id))[0]) || null;
+  render();
+}
+function render(){
+  const done = order.filter(id=>labels[id]).length;
+  $("count").textContent = done+" / "+order.length+" labeled";
+  if(cur){$("img").src=urls[cur];$("img").classList.remove("hide")}
+  else{$("img").classList.add("hide");
+    const n={};Object.values(labels).forEach(l=>n[l.label]=(n[l.label]||0)+1);
+    $("summary").innerHTML="<b>All "+order.length+" labeled.</b> Download the CSV, then commit it as <code>labels/human_v1"+(pass===2?"_pass2":"")+".csv</code>.<br>"+Object.entries(n).map(([k,v])=>k+": "+v).join("<br>")}
+  if(cur)$("summary").textContent="";
+}
+function assign(i){
+  if(!cur||i<0||i>=LABELS.length)return;
+  labels[cur]={label:LABELS[i][0],at:new Date().toISOString().replace(/\.\d+Z$/,"Z"),notes:$("notes").value.trim()};
+  history.push(cur);$("notes").value="";save();next();
+}
+function undo(){
+  const id=history.pop();if(!id){msg("Nothing to undo.");return}
+  const n=labels[id]?labels[id].notes:"";delete labels[id];skipped.delete(id);cur=id;save();render();$("notes").value=n;
+}
+function skip(){if(!cur)return;skipped.add(cur);save();next()}
+function download(){
+  const name="human_v1"+(pass===2?"_pass2":"")+".csv";
+  const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([toCSV()],{type:"text/csv"}));a.download=name;a.click();
+  msg("Downloaded "+name+" ("+Object.keys(labels).length+" labels).")}
+document.addEventListener("keydown",e=>{
+  if(e.metaKey||e.ctrlKey||e.altKey||$("stage").classList.contains("hide"))return;
+  if(document.activeElement===$("notes")){if(e.key==="Escape")$("notes").blur();return}
+  if(e.key>="1"&&e.key<="6")assign(+e.key-1);
+  else if(e.key==="u")undo();else if(e.key==="s")skip();else if(e.key==="d")download();
+  else if(e.key==="n"){e.preventDefault();$("notes").focus()}
+  else if(e.key==="h")$("codes").classList.toggle("hide")});
+$("undo").onclick=undo;$("skip").onclick=skip;$("dl").onclick=download;
+
+$("dir").onchange=async ev=>{
+  const files=[...ev.target.files];
+  const csvs=files.filter(f=>f.webkitRelativePath.endsWith("/windows_ui.csv")||f.webkitRelativePath==="windows_ui.csv")
+                  .sort((a,b)=>a.webkitRelativePath.length-b.webkitRelativePath.length);
+  if(!csvs.length){msg("windows_ui.csv not found in that folder. Pick the labels/ folder.");return}
+  const base=csvs[0].webkitRelativePath.slice(0,-"windows_ui.csv".length);
+  const byPath=new Map(files.map(f=>[f.webkitRelativePath,f]));
+  const rows=parseCSV(await csvs[0].text());
+  const h=rows.shift();if(h.join(",")!=="window_id,sheet"){msg("windows_ui.csv must have exactly the columns window_id,sheet.");return}
+  const map={},bad=[];
+  for(const [id,sheet] of rows){const f=byPath.get(base+sheet);if(f)map[id]=URL.createObjectURL(f);else bad.push(sheet)}
+  if(bad.length){msg(bad.length+" sheets listed in the CSV were not found, e.g. "+bad[0]+". Regenerate or re-pick the folder.");return}
+  if(!rows.length){msg("windows_ui.csv is empty.");return}
+  start(Object.keys(map),map)};
+$("demo").onclick=()=>{ // 24 synthetic sheets: noise tiles with a few streaked or dark ones. Not real data.
+  const m={},list=[],r=mulberry32(7);
+  for(let k=0;k<24;k++){const c=document.createElement("canvas");c.width=752;c.height=360;const g=c.getContext("2d");
+    for(let i=0;i<12;i++){const x=(i%4)*188,y=Math.floor(i/4)*120,b=k%4===1?30:110+r()*60;
+      g.fillStyle=`rgb(${b},${b},${b})`;g.fillRect(x,y,188,120);
+      for(let j=0;j<60;j++){g.fillStyle=`rgba(255,255,255,${r()*.5})`;const w=k%3===0?60:4;g.fillRect(x+r()*180,y+r()*115,w,3)}}
+    g.fillStyle="#fff";g.font="20px sans-serif";g.fillText("DEMO sheet, not real data",8,350);
+    const id="demo"+String(k).padStart(2,"0");list.push(id);m[id]=c.toDataURL("image/png")}
+  start(list,m)};
+if(location.search.includes("demo"))$("demo").click();
+</script></body></html>

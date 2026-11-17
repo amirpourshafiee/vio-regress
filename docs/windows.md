@@ -22,3 +22,13 @@ written as PGM to a scratch directory, composed here, then deleted.
 **Not yet done.** No real window set exists: it needs all 11 sequences scored and the faulted
 runs on every sequence, which run in Codespaces. Tested here with fake bags only; the
 rosbag path in `bagframes.extract` has not run against a real bag.
+
+## Labeling (S8, S9)
+
+`tools/labeler.html` is one self-contained file: open it in a browser, pick the `labels/` folder
+(it reads only `windows_ui.csv` and `sheets/`, never `windows.csv`), and label with keys 1 to 6
+(`docs/codebook.md`). Order is shuffled with a fixed seed, `u` undoes, progress autosaves in the
+browser, `d` downloads `human_v1.csv` (`window_id,label,labeled_at_utc,notes`). Pass 2 relabels a
+random 40 and downloads `human_v1_pass2.csv`. `?demo` opens it with synthetic sheets. The codebook
+still needs 2 example windows per label (guide 8.3), which need real windows.
+
