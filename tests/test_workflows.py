@@ -325,3 +325,27 @@ def test_fault_is_applied_to_a_copy_and_the_default_path_is_unchanged(wf):
 def test_summary_marks_an_injected_fault(wf):
     summ = next(s for s in steps(wf) if "vioreg.report" in s.get("run", ""))["run"]
     assert '--injected-fault "$FAULT"' in summ
+
+
+# ---------------------------------------------------------------- verbosity (MH_03 start-up)
+def test_verbosity_input_is_a_choice_defaulting_to_warning(wf):
+    inp = triggers(wf)["workflow_dispatch"]["inputs"]["verbosity"]
+    assert inp["type"] == "choice" and inp["default"] == "WARNING"
+    assert inp["options"][0] == "WARNING" and not inp.get("required", False)
+    from vioreg.runner import VERBOSITY_LEVELS
+    assert set(inp["options"]) <= set(VERBOSITY_LEVELS)
+
+
+def test_scheduled_run_keeps_warning_verbosity(wf):
+    (job,) = wf["jobs"].values()
+    assert job["env"]["VERBOSITY"] == "${{ inputs.verbosity || 'WARNING' }}"
+
+
+def test_verbosity_is_validated_before_any_run(wf):
+    val = next(s for s in steps(wf) if s.get("name") == "Validate inputs")["run"]
+    assert '[[ "$VERBOSITY" =~ ^(WARNING|INFO|DEBUG)$ ]]' in val
+
+
+def test_summary_flags_a_non_default_verbosity(wf):
+    summ = next(s for s in steps(wf) if "vioreg.report" in s.get("run", ""))["run"]
+    assert 'if [ "$VERBOSITY" != WARNING ]' in summ

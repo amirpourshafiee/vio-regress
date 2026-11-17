@@ -1,6 +1,7 @@
 """Run OpenVINS on one EuRoC sequence in the pinned Docker image.
 
-    scripts/run_sequence.sh <SEQ> <OUT_ROOT>        (env: RUNS, MODE, CPUS, CONFIG_DIR, IMAGE, DATA)
+    scripts/run_sequence.sh <SEQ> <OUT_ROOT>        (env: RUNS, MODE, CPUS, CONFIG_DIR, IMAGE, DATA,
+                                                     BAG_START, BAG_RATE, VERBOSITY)
 
 The image is the pinned ref in docker/IMAGE_REF (<repo>@sha256:...; $IMAGE or --image
 override it, same form required). Before any run, `docker image inspect` must confirm that
@@ -54,6 +55,10 @@ _BAG_START = {"MH_01": 40.0, "MH_02": 35.0, "MH_03": 17.5, "MH_04": 15.0, "MH_05
               "V2_03": 0.0}
 CONFIG_NAME = "euroc_mav"
 RUN_ANY = re.compile(r"^run(\d+)\.")  # any per-run artifact: .tum .ov.txt .wall_s .log ...
+# OpenVINS printer levels (ov_core utils/print.h). WARNING is the default for every gated run;
+# INFO/DEBUG exist to diagnose start-up (MH_03_medium late start). More printing slows the
+# estimator, which can change WHICH leading poses the recorder catches, never the poses.
+VERBOSITY_LEVELS = ("ALL", "DEBUG", "INFO", "WARNING", "ERROR", "SILENT")
 
 
 def bag_start(seq: str) -> float:
@@ -87,6 +92,7 @@ class RunConfig:
     config_dir: Path | None = None
     bag_start_s: float | None = None  # None = upstream per-sequence default
     bag_rate: float | None = None     # realtime only; None = 1x
+    verbosity: str = "WARNING"        # one of VERBOSITY_LEVELS
 
 
 class RunnerError(RuntimeError):
@@ -109,6 +115,8 @@ def docker_cmd(c: RunConfig, k: int) -> list[str]:
         raise ValueError(f"bag_start must be >= 0, not {start}")
     if c.bag_rate is not None and c.mode != "realtime":
         raise ValueError("bag_rate exists only in realtime mode (serial reads the bag directly)")
+    if c.verbosity not in VERBOSITY_LEVELS:
+        raise ValueError(f"verbosity must be one of {', '.join(VERBOSITY_LEVELS)}, not {c.verbosity!r}")
     seq_out = Path(c.out_root).resolve() / c.seq
     cmd = ["docker", "run", "--rm", "--user", f"{c.uid}:{c.gid}",
            "-e", "HOME=/tmp", "-e", "ROS_HOME=/tmp/.ros"]
@@ -120,7 +128,7 @@ def docker_cmd(c: RunConfig, k: int) -> list[str]:
     launch = "serial.launch" if c.mode == "serial" else "subscribe.launch"
     cmd += [c.image, "roslaunch", "ov_msckf", launch,
             f"config:={CONFIG_NAME}", f"dataset:={c.seq}", f"bag:=/data/{c.seq}.bag",
-            f"bag_start:={start}", "verbosity:=WARNING",
+            f"bag_start:={start}", f"verbosity:={c.verbosity}",
             "dosave:=true", f"path_est:=/out/run{k}.ov.txt"]
     if c.mode == "realtime":
         cmd += ["dobag:=true", f"bag_rate:={c.bag_rate if c.bag_rate is not None else 1}"]
@@ -191,7 +199,11 @@ def main(argv=None) -> int:
                     default=float(os.environ["BAG_START"]) if os.environ.get("BAG_START") else None)
     ap.add_argument("--bag-rate", type=float,
                     default=float(os.environ["BAG_RATE"]) if os.environ.get("BAG_RATE") else None)
+    ap.add_argument("--verbosity", choices=VERBOSITY_LEVELS,
+                    default=os.environ.get("VERBOSITY") or "WARNING")
     a = ap.parse_args(argv)
+    if a.verbosity not in VERBOSITY_LEVELS:  # argparse does not check an env default
+        ap.error(f"VERBOSITY must be one of {', '.join(VERBOSITY_LEVELS)}, not {a.verbosity!r}")
 
     try:
         a.image = a.image or ir.pinned_ref()
@@ -213,11 +225,11 @@ def main(argv=None) -> int:
     c = RunConfig(seq=a.seq, out_root=a.out_root, data_root=a.data, image=a.image,
                   image_digest=digest, config_hash=chash, uid=os.getuid(), gid=os.getgid(), mode=a.mode,
                   cpus=a.cpus, config_dir=a.config_dir, bag_start_s=a.bag_start,
-                  bag_rate=a.bag_rate)
+                  bag_rate=a.bag_rate, verbosity=a.verbosity)
     print(f"run_sequence: {a.seq} x{a.runs} mode={a.mode} cpus={a.cpus or 'unlimited'} "
           f"image={digest[:19]} config={a.config_dir or 'image'} ({chash[:12]}) "
           f"bag_start={a.bag_start if a.bag_start is not None else bag_start(a.seq)} "
-          f"bag_rate={a.bag_rate or '-'}", flush=True)
+          f"bag_rate={a.bag_rate or '-'} verbosity={a.verbosity}", flush=True)
     fails = 0
     for _ in range(a.runs):
         r = run_once(c)

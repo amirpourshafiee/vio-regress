@@ -215,3 +215,57 @@ def test_main_defaults_to_pinned_ref_and_passes_the_verified_digest(tmp_path, mo
     assert runner.main(_bag(tmp_path)) == 0
     assert seen["ref"] == pinned and seen["cfg"].image == pinned
     assert seen["cfg"].image_digest == "sha256:" + "a" * 64
+
+
+# ---------------------------------------------------------------- verbosity (MH_03 start-up)
+def test_verbosity_defaults_to_warning(tmp_path):
+    assert "verbosity:=WARNING" in runner.docker_cmd(cfg(tmp_path), 1)
+
+
+@pytest.mark.parametrize("level", ["DEBUG", "INFO", "WARNING", "ERROR", "SILENT", "ALL"])
+def test_verbosity_override_reaches_the_launch_args(tmp_path, level):
+    cmd = runner.docker_cmd(cfg(tmp_path, verbosity=level), 1)
+    assert f"verbosity:={level}" in cmd
+    assert sum(a.startswith("verbosity:=") for a in cmd) == 1
+
+
+@pytest.mark.parametrize("bad", ["info", "VERBOSE", "", "INFO extra:=1", "INFO;rm"])
+def test_unknown_verbosity_is_rejected(tmp_path, bad):
+    with pytest.raises(ValueError, match="verbosity"):
+        runner.docker_cmd(cfg(tmp_path, verbosity=bad), 1)
+
+
+def _main_capturing_cfg(tmp_path, monkeypatch, argv_extra=()):
+    monkeypatch.setattr(runner.ir, "verify_image", lambda ref, inspect=None: "sha256:" + "a" * 64)
+    monkeypatch.setattr(runner.ch, "image_reader", lambda image, name: (lambda f: b""))
+    monkeypatch.setattr(runner.ch, "config_hash", lambda read: "f" * 40)
+    seen = {}
+    monkeypatch.setattr(runner, "run_once",
+                        lambda c: seen.update(cfg=c) or runner.RunResult(k=1, ok=True, wall_s=0.0))
+    rc = runner.main([*_bag(tmp_path), *argv_extra])
+    return rc, seen
+
+
+def test_main_reads_verbosity_from_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("VERBOSITY", "INFO")
+    rc, seen = _main_capturing_cfg(tmp_path, monkeypatch)
+    assert rc == 0 and seen["cfg"].verbosity == "INFO"
+
+
+def test_main_verbosity_default_is_warning(tmp_path, monkeypatch):
+    monkeypatch.delenv("VERBOSITY", raising=False)
+    rc, seen = _main_capturing_cfg(tmp_path, monkeypatch)
+    assert rc == 0 and seen["cfg"].verbosity == "WARNING"
+
+
+def test_main_rejects_bad_verbosity_before_any_run(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "run_once", lambda c: pytest.fail("ran with a bad verbosity"))
+    with pytest.raises(SystemExit):
+        runner.main([*_bag(tmp_path), "--verbosity", "loud"])
+
+
+def test_main_rejects_bad_verbosity_from_env_before_any_run(tmp_path, monkeypatch):
+    monkeypatch.setenv("VERBOSITY", "info")
+    monkeypatch.setattr(runner, "run_once", lambda c: pytest.fail("ran with a bad VERBOSITY"))
+    with pytest.raises(SystemExit):
+        runner.main(_bag(tmp_path))
