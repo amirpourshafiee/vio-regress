@@ -24,6 +24,11 @@ SOURCES = ("natural", "injected", "control")
 META_FIELDS = ["window_id", "sequence", "run_id", "source", "t0", "t1", "peak_err_m", "sheet"]
 UI_FIELDS = ["window_id", "sheet"]
 ID_SALT = "vioreg-windows-v1"
+# Seconds dropped after each run's first pose before windows are cut: the estimator's
+# start-up transient (S7 Stage 1, MH_01_easy: most "worst" windows were the first 40 s).
+# NOT the gate's skip_s, which counts from ground-truth start and removes no poses on the
+# gated sequences (docs/crosscheck.md); the two are different quantities.
+TRIM_START_S = 15.0
 
 
 def rank_windows(t: np.ndarray, err: np.ndarray, win_s: float = 5.0) -> list[dict]:
@@ -56,6 +61,15 @@ def pick_windows(t: np.ndarray, err: np.ndarray, win_s: float = 5.0,
     worst = [dict(r, source="natural") for r in rows[:top_k]]
     best = [dict(r, source="control") for r in rows[::-1][:control_k]]
     return worst + best
+
+
+def trim_start(t: np.ndarray, err: np.ndarray, trim_s: float = TRIM_START_S):
+    """Drop the first trim_s seconds counted from the run's first pose (t[0] of its own
+    error series), not from ground-truth start."""
+    if trim_s <= 0 or len(t) == 0:
+        return t, err
+    keep = t >= t[0] + trim_s
+    return t[keep], err[keep]
 
 
 def error_series(est: Trajectory, gt: Trajectory, align: str = "posyaw",

@@ -131,7 +131,8 @@ def injected_runs(repo: Path, data_root: Path, manifest: Path, seqs=None,
     return out
 
 
-def plan(runs, win_s, top_k, inj_top_k, control_k, align="posyaw", skip_s=0.0):
+def plan(runs, win_s, top_k, inj_top_k, control_k, align="posyaw", skip_s=0.0,
+         trim_start_s=W.TRIM_START_S):
     """-> (rows, skipped). rows = metadata rows; skipped = [(run_id, reason)]."""
     rows, skipped = [], []
     avoid: dict[str, list] = {}  # sequence -> natural/control intervals (natural runs come first)
@@ -142,6 +143,9 @@ def plan(runs, win_s, top_k, inj_top_k, control_k, align="posyaw", skip_s=0.0):
         try:
             est, gt = load_tum(r["tum"]), load_euroc_gt(r["gt"])
             t, err = W.error_series(est, gt, align, skip_s)
+            t, err = W.trim_start(t, err, trim_start_s)
+            if len(t) == 0:
+                raise ValueError(f"no poses left after trimming {trim_start_s:g} s")
         except Exception as e:  # noqa: BLE001 - reported, never silent
             skipped.append((r["run_id"], str(e)))
             continue
@@ -267,7 +271,11 @@ def _parser():
     p.add_argument("--top-k", type=int, default=8, help="worst windows per natural run")
     p.add_argument("--control-k", type=int, default=5, help="best windows per natural run")
     p.add_argument("--inj-top-k", type=int, default=3, help="worst windows per faulted run")
-    p.add_argument("--skip-s", type=float, default=0.0)
+    p.add_argument("--skip-s", type=float, default=0.0,
+                   help="passed to ATE: seconds from GROUND-TRUTH start (the gate's skip_s)")
+    p.add_argument("--trim-start-s", type=float, default=W.TRIM_START_S,
+                   help="drop this many seconds after each run's FIRST POSE before cutting "
+                        "windows (start-up transient); not the gate's skip_s")
     p.add_argument("--fault", action="append", default=None, metavar="SPEC",
                    help="only faulted runs matching this fault_cli spec (repeatable), e.g. "
                         "--fault blur=25 --fault gamma=2.2 --fault time-offset=100")
@@ -296,7 +304,8 @@ def main(argv=None, extract=docker_extract) -> int:
     if not a.no_injected:
         runs += injected_runs(repo, data, repo / "labels" / "fault_manifest.csv", a.seqs,
                               faults=a.fault)
-    rows, skipped = plan(runs, a.win_s, a.top_k, a.inj_top_k, a.control_k, skip_s=a.skip_s)
+    rows, skipped = plan(runs, a.win_s, a.top_k, a.inj_top_k, a.control_k, skip_s=a.skip_s,
+                         trim_start_s=a.trim_start_s)
     labels = repo / "labels"
     sheets = labels / "sheets"
     csvs = (labels / "windows.csv", labels / "windows_ui.csv")

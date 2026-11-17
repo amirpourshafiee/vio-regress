@@ -10,6 +10,19 @@ best windows. `injected`: the 3 worst windows of each faulted copy in `labels/fa
 windows with about 20 to 25 percent controls, and the CLI warns when the set misses that.
 Only run1 of a sequence is used (`--all-runs` lifts it): serial repeats are near-duplicates.
 
+**Start-up trim.** Windows are cut only after the first `--trim-start-s` seconds (default
+`windows.TRIM_START_S` = 15) counted from each run's **first pose**. This drops the estimator's
+start-up transient, which in Stage 1 on MH_01_easy took most of the "worst" windows. It is
+**not** the gate's `skip_s` (`configs/thresholds.yaml`, passed as `--skip-s`). That value counts
+from ground-truth start and, on the gated sequences, removes no poses at all
+(docs/crosscheck.md).
+
+**Scoring sequences outside the gate.** `score.py` refuses a sequence that is not in
+`configs/thresholds.yaml`, and only the 3 gated sequences are listed there. `--ungated` scores
+an unlisted EuRoC sequence with the defaults (`align` from `defaults`, `skip_s` 0) and prints
+`<seq>: UNGATED`. The result JSON keeps its frozen key set. A listed sequence is scored as
+before, and the gate still fails any sequence it has no baseline for.
+
 **No repeated moments.** An injected window never overlaps in time a natural or control window
 of the same sequence. The injected run takes its next-worst window that does not overlap. If
 fewer than `--inj-top-k` are left, it uses what exists and prints
@@ -63,12 +76,12 @@ PY=.venv/bin/python; S=MH_02_easy
 FAULTS="--fault blur=25 --fault gamma=2.2 --fault time-offset=100"   # same on EVERY call
 scripts/fetch_euroc.sh data/euroc "$S"
 RUNS=1 MODE=serial bash scripts/run_sequence.sh "$S" results
-$PY -m vioreg.score --seqs "$S" --out results --data data/euroc
+$PY -m vioreg.score --seqs "$S" --out results --data data/euroc --ungated
 for f in "blur --length 25" "gamma --gamma 2.2" "time-offset --offset-ms 100"; do
   D=$($PY -m vioreg.fault_cli $f --seq "$S" --print-data-root | tail -n1); RID=$(basename "$D")
   [ -f "$D/$S/$S.bag" ] || { echo "no faulted bag for $f"; exit 1; }
   RUNS=1 MODE=serial DATA="$D" bash scripts/run_sequence.sh "$S" "results/faults/$RID"
-  $PY -m vioreg.score --seqs "$S" --out "results/faults/$RID" --data data/euroc
+  $PY -m vioreg.score --seqs "$S" --out "results/faults/$RID" --data data/euroc --ungated
 done
 $PY -m vioreg.window_cli --sheets-only --seqs "$S" $FAULTS
 # then delete data/euroc/$S/$S.bag and data/faulted/${S}__*; after all 11:

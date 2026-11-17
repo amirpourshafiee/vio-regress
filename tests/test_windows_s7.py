@@ -203,7 +203,7 @@ def test_end_to_end_with_fake_frames(repo):
     for r in meta:
         assert (repo / "labels" / r["sheet"]).exists() and (repo / "labels" / r["sheet"]).stat().st_size < 1_000_000
     spike = max((r for r in meta if r["source"] == "natural"), key=lambda r: float(r["peak_err_m"]))
-    assert float(spike["t0"]) == 130.0
+    assert abs(float(spike["t0"]) - 130.0) < 0.1  # grid starts at the first pose kept after the trim
     assert not list((repo / "labels").glob("**/*.pgm"))  # scratch frames were removed
 
 
@@ -531,8 +531,40 @@ def test_plan_injected_windows_never_overlap_natural_or_control(repo):
 
 def test_plan_reports_a_short_injected_run(repo, capsys):
     # 12 windows of 5 s; natural 5 + control 5 leave 2 free; ask for 4 injected
-    rc = _cli(repo, "--dry-run", "--top-k", "5", "--control-k", "5", "--inj-top-k", "4")
+    rc = _cli(repo, "--dry-run", "--top-k", "5", "--control-k", "5", "--inj-top-k", "4",
+              "--trim-start-s", "0")
     out = capsys.readouterr()
     assert rc == 0
     assert "MH_01_easy__blur_length9: only 2 of 4 injected windows" in out.err
     assert "overlap" in out.err
+
+
+# decision 1 (revised 2026-11-17): trim the start-up transient after each run's first pose
+def test_trim_start_default_is_15_s_from_the_runs_first_pose():
+    assert W.TRIM_START_S == 15.0
+    assert cli._parser().parse_args([]).trim_start_s == W.TRIM_START_S
+
+
+def test_trim_start_is_not_the_gate_skip_s():
+    """The gate's skip_s counts from ground-truth start and removes no poses on the gated
+    sequences; the trim counts from the run's first pose. They are different quantities."""
+    import inspect
+    assert "first pose" in inspect.getdoc(W.trim_start)
+
+
+def test_no_window_starts_inside_the_trimmed_start(repo):
+    runs = (cli.natural_runs(repo / "data/euroc", repo / "results")
+            + cli.injected_runs(repo, repo / "data/euroc", repo / "labels/fault_manifest.csv"))
+    rows, _ = cli.plan(runs, 5.0, 3, 2, 2)
+    assert min(r["t0"] for r in rows) >= 100.0 + 15.0  # fixture runs start at t=100
+    rows0, _ = cli.plan(runs, 5.0, 3, 2, 2, trim_start_s=0.0)
+    assert min(r["t0"] for r in rows0) == 100.0
+
+
+def test_trim_start_cuts_the_error_series():
+    t = np.arange(0.0, 30.0, 0.05)
+    err = np.arange(len(t), dtype=float)
+    t2, e2 = W.trim_start(t, err, 15.0)
+    assert t2[0] >= 15.0 and len(t2) == len(e2) and np.all(e2 == err[t >= 15.0])
+    t3, _ = W.trim_start(t, err, 0.0)
+    assert len(t3) == len(t)

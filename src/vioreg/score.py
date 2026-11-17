@@ -56,6 +56,7 @@ import numpy as np
 from . import config_hash as ch
 from . import image_ref as ir
 from .euroc_io import load_euroc_gt, load_tum
+from .fault_cli import SEQ_RE
 from .metrics import ate, rpe
 
 RPE_DELTA_S = 1.0
@@ -240,6 +241,10 @@ def main(argv=None) -> int:
     ap.add_argument("--thresholds", default=str(ROOT / "configs" / "thresholds.yaml"))
     ap.add_argument("--image", default=None,
                     help="digest-pinned ref (default: $IMAGE, else docker/IMAGE_REF)")
+    ap.add_argument("--ungated", action="store_true",
+                    help="score a EuRoC sequence that is NOT in the thresholds file with the "
+                         "defaults (align from defaults, skip_s 0); for the S7 window set. The "
+                         "result JSON is unchanged (frozen keys); the gate still fails it.")
     ap.add_argument("--config-name", default="euroc_mav")
     ap.add_argument("--config-dir", type=Path, default=None,
                     help="hash this local config dir (the one the runs mounted) "
@@ -257,10 +262,15 @@ def main(argv=None) -> int:
     rc = 0
     for seq in a.seqs:
         if seq not in cfg.get("sequences", {}):
-            print(f"score: {seq}: FAIL: not in {a.thresholds}", file=sys.stderr)
-            rc = 1
-            continue
-        lim = {**cfg.get("defaults", {}), **cfg["sequences"][seq]}
+            if not (a.ungated and SEQ_RE.fullmatch(seq)):
+                print(f"score: {seq}: FAIL: not in {a.thresholds}", file=sys.stderr)
+                rc = 1
+                continue
+            lim = {**cfg.get("defaults", {}), "skip_s": 0.0}
+            print(f"{seq}: UNGATED (not in {Path(a.thresholds).name}): "
+                  f"align={lim.get('align', 'posyaw')} skip_s=0")
+        else:
+            lim = {**cfg.get("defaults", {}), **cfg["sequences"][seq]}
         out, ok = score_sequence(seq, Path(a.out), Path(a.data) / seq / GT_REL, prov,
                                  align=lim.get("align", "posyaw"),
                                  skip_s=float(lim.get("skip_s", 0.0)))
