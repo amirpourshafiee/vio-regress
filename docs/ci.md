@@ -2,11 +2,18 @@
 
 `.github/workflows/nightly.yml` runs **daily at 11:17 UTC** and on manual dispatch
 (`workflow_dispatch`; inputs `sequences`, default `MH_01_easy V1_01_easy MH_03_medium`, and
-`runs`, default `2`; a scheduled run uses the same defaults). Since S5b it **pulls** the image pinned in `docker/IMAGE_REF` and checks
+`runs`, default `2`; `fault`, default empty; `verbosity`, default `WARNING`, a choice of
+`WARNING`, `INFO` or `DEBUG`; a scheduled run uses the same defaults). Since S5b it **pulls** the image pinned in `docker/IMAGE_REF` and checks
 its registry digest (S5a built the image instead). Then, for each sequence, it fetches,
 runs, scores and deletes the bag, printing `df -h /` at each phase. It judges all sequences
 with the gate (fails closed), writes a job summary, and uploads `results/` plus
 `junit-gate.xml` (never the dataset).
+
+`verbosity` sets the OpenVINS log level (`verbosity:=` in the launch command; also `VERBOSITY`
+or `--verbosity` for `scripts/run_sequence.sh`). It exists to diagnose the MH_03_medium late
+start (docs/WRITEUP.md section 3). Results are still gated, but a non-WARNING run is a
+diagnostic: printing slows the estimator, which can change how many leading poses the recorder
+catches (never the poses themselves). The job summary says so.
 
 Sections 1–2 below record the S5a design and its first run. Section 3 is the S5b image
 design. Section 4 (S5c) covers the schedule and fetch failures.
