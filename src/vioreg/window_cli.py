@@ -46,7 +46,7 @@ import numpy as np
 
 from . import image_ref as ir
 from . import windows as W
-from .fault_cli import SEQ_RE
+from .fault_cli import SEQ_RE, parse_spec
 from .euroc_io import load_euroc_gt, load_tum
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -73,11 +73,29 @@ def natural_runs(data_root: Path, results: Path, seqs=None, all_runs: bool = Fal
     return out
 
 
-def injected_runs(repo: Path, data_root: Path, manifest: Path, seqs=None) -> list[dict]:
-    """One entry per non-identity manifest row. A row whose results are missing, or a repeat
+def _norm(params: dict) -> dict:
+    return {k: float(v) for k, v in params.items()}
+
+
+def parse_faults(specs) -> list[tuple]:
+    """['blur=25', ...] -> [(spec, fault, params)]; off the fault_cli allow-list raises."""
+    out = []
+    for spec in specs:
+        fault, params = parse_spec(spec)
+        out.append((spec, fault, _norm(params)))
+    return out
+
+
+def injected_runs(repo: Path, data_root: Path, manifest: Path, seqs=None,
+                  faults=None) -> list[dict]:
+    """One entry per non-identity manifest row; with `faults` (fault_cli specs such as
+    'blur=25'), only rows matching one of them, and a spec with no row for a sequence that
+    has rows is reported. A row whose results are missing, or a repeat
     of a run_id already seen, is returned with a 'problem' so plan() reports it: a silent
     skip here once meant zero injected windows (results were under another folder)."""
     out, seen = [], set()
+    want = parse_faults(faults) if faults else None
+    matched: dict[str, set] = {}
     if not Path(manifest).exists():
         return out
     with open(manifest, newline="") as f:
@@ -85,6 +103,12 @@ def injected_runs(repo: Path, data_root: Path, manifest: Path, seqs=None) -> lis
             if r["fault"] == "identity" or (seqs and r["sequence"] not in seqs):
                 continue
             rid, seq = r["run_id"], r["sequence"]
+            if want is not None:
+                params = _norm(json.loads(r["params"] or "{}"))
+                hit = [sp for sp, fa, pa in want if fa == r["fault"] and pa == params]
+                matched.setdefault(seq, set()).update(hit)
+                if not hit:
+                    continue
             res = FAULT_RESULTS / rid / seq
             e = {"run_id": rid, "sequence": seq, "injected": True, "tum": None,
                  "bag": repo / "data" / "faulted" / rid / seq / f"{seq}.bag",
@@ -98,6 +122,12 @@ def injected_runs(repo: Path, data_root: Path, manifest: Path, seqs=None) -> lis
                 out.append(dict(e, problem=f"no results: {res}/run*.tum not found"))
                 continue
             out.append(dict(e, tum=tums[0]))
+    for seq in sorted(matched):
+        for sp, _fa, _pa in want:
+            if sp not in matched[seq]:
+                out.append({"run_id": f"{seq} fault {sp}", "sequence": seq, "injected": True,
+                            "problem": "no manifest row for this fault on this sequence "
+                                       "(fault_cli not run?)"})
     return out
 
 
@@ -229,6 +259,9 @@ def _parser():
     p.add_argument("--control-k", type=int, default=5, help="best windows per natural run")
     p.add_argument("--inj-top-k", type=int, default=3, help="worst windows per faulted run")
     p.add_argument("--skip-s", type=float, default=0.0)
+    p.add_argument("--fault", action="append", default=None, metavar="SPEC",
+                   help="only faulted runs matching this fault_cli spec (repeatable), e.g. "
+                        "--fault blur=25 --fault gamma=2.2 --fault time-offset=100")
     p.add_argument("--dry-run", action="store_true")
     mode = p.add_mutually_exclusive_group()
     mode.add_argument("--sheets-only", action="store_true",
@@ -240,13 +273,20 @@ def _parser():
 
 
 def main(argv=None, extract=docker_extract) -> int:
-    a = _parser().parse_args(argv)
+    ap = _parser()
+    a = ap.parse_args(argv)
+    try:
+        if a.fault:
+            parse_faults(a.fault)
+    except Exception as e:  # noqa: BLE001 - Refused or out-of-range values
+        ap.error(f"--fault: {e}")
     repo = a.repo
     data = a.data or repo / "data" / "euroc"
     results = a.results or repo / "results"
     runs = natural_runs(data, results, a.seqs, a.all_runs)
     if not a.no_injected:
-        runs += injected_runs(repo, data, repo / "labels" / "fault_manifest.csv", a.seqs)
+        runs += injected_runs(repo, data, repo / "labels" / "fault_manifest.csv", a.seqs,
+                              faults=a.fault)
     rows, skipped = plan(runs, a.win_s, a.top_k, a.inj_top_k, a.control_k, skip_s=a.skip_s)
     labels = repo / "labels"
     sheets = labels / "sheets"

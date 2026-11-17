@@ -46,9 +46,15 @@ from `fault_cli`, never retype them. The last line of `--print-data-root` is the
 root, and its folder name is the run id. Rebuilding a deleted copy (S6 sequences) does not
 add a second manifest row.
 
+Pass the same `--fault` list to every `window_cli` call. The manifest also holds the 14 S6 faults
+of MH_01_easy, V1_01_easy and MH_03_medium, and those runs have results. Without the filter they
+would be planned too, have no bags and no sheets, and the final step would fail. A spec with no
+manifest row for a sequence is printed as `SKIPPED <seq> fault <spec>`.
+
 ```bash
 set -euo pipefail   # a failed fault_cli must stop the loop, not yield an empty RID
 PY=.venv/bin/python; S=MH_02_easy
+FAULTS="--fault blur=25 --fault gamma=2.2 --fault time-offset=100"   # same on EVERY call
 scripts/fetch_euroc.sh data/euroc "$S"
 RUNS=1 MODE=serial bash scripts/run_sequence.sh "$S" results
 $PY -m vioreg.score --seqs "$S" --out results --data data/euroc
@@ -58,9 +64,9 @@ for f in "blur --length 25" "gamma --gamma 2.2" "time-offset --offset-ms 100"; d
   RUNS=1 MODE=serial DATA="$D" bash scripts/run_sequence.sh "$S" "results/faults/$RID"
   $PY -m vioreg.score --seqs "$S" --out "results/faults/$RID" --data data/euroc
 done
-$PY -m vioreg.window_cli --sheets-only --seqs "$S"
+$PY -m vioreg.window_cli --sheets-only --seqs "$S" $FAULTS
 # then delete data/euroc/$S/$S.bag and data/faulted/${S}__*; after all 11:
-$PY -m vioreg.window_cli --reuse-sheets
+$PY -m vioreg.window_cli --reuse-sheets $FAULTS
 ```
 
 For MH_01_easy, V1_01_easy and MH_03_medium the fault runs already exist from S6: rebuild the

@@ -425,3 +425,59 @@ def test_reuse_sheets_with_no_windows_fails_and_removes_old_csvs(repo):
     assert _cli(repo, "--reuse-sheets", extract=_no_extract) == 1
     assert not (repo / "labels/windows.csv").exists()
     assert not (repo / "labels/windows_ui.csv").exists()
+
+
+# --fault: restrict injected runs to the agreed fault set (S6 left 14 faults per sequence)
+def _add_fault_run(repo, rid, fault, params):
+    t = np.arange(100.0, 160.0, 0.05)
+    d = repo / f"results/faults/{rid}/MH_01_easy"
+    d.mkdir(parents=True)
+    save_tum(_circle(t), d / "run1.tum")
+    (repo / f"data/faulted/{rid}/MH_01_easy").mkdir(parents=True)
+    (repo / f"data/faulted/{rid}/MH_01_easy/MH_01_easy.bag").write_bytes(b"")
+    with open(repo / "labels/fault_manifest.csv", "a") as f:
+        f.write(f'{rid},MH_01_easy,{fault},"{json.dumps(params, sort_keys=True).replace(chr(34), chr(34) * 2)}",0,x\n')
+
+
+def _with_s6_extras(repo):
+    _add_fault_run(repo, "MH_01_easy__blur_length25", "blur", {"length": 25})
+    _add_fault_run(repo, "MH_01_easy__time-offset_offset_ms100", "time-offset", {"offset_ms": 100.0})
+    _add_fault_run(repo, "MH_01_easy__time-offset_offset_ms40", "time-offset", {"offset_ms": 40.0})
+    return repo
+
+
+def test_fault_filter_keeps_only_matching_manifest_rows(repo):
+    _with_s6_extras(repo)
+    inj = cli.injected_runs(repo, repo / "data/euroc", repo / "labels/fault_manifest.csv",
+                            faults=["blur=25", "time-offset=100"])
+    assert sorted(r["run_id"] for r in inj if not r.get("problem")) == \
+        ["MH_01_easy__blur_length25", "MH_01_easy__time-offset_offset_ms100"]
+
+
+def test_no_fault_filter_keeps_every_row_as_before(repo):
+    _with_s6_extras(repo)
+    inj = cli.injected_runs(repo, repo / "data/euroc", repo / "labels/fault_manifest.csv")
+    assert len([r for r in inj if not r.get("problem")]) == 4
+
+
+def test_a_fault_spec_with_no_manifest_row_is_reported(repo, capsys):
+    _with_s6_extras(repo)
+    assert _cli(repo, "--dry-run", "--fault", "blur=25", "--fault", "gamma=2.2") == 0
+    err = capsys.readouterr().err
+    assert "SKIPPED MH_01_easy fault gamma=2.2" in err and "no manifest row" in err
+
+
+def test_fault_filter_reaches_the_final_step(repo):
+    """Filtered runs without bags must not make --reuse-sheets fail."""
+    _with_s6_extras(repo)
+    args = ("--fault", "blur=25", "--fault", "time-offset=100")
+    assert _cli(repo, "--sheets-only", *args) == 0
+    (repo / "data/faulted/MH_01_easy__time-offset_offset_ms40/MH_01_easy/MH_01_easy.bag").unlink()
+    assert _cli(repo, "--reuse-sheets", *args, extract=_no_extract) == 0
+    meta = list(_read_csv(repo / "labels/windows.csv"))
+    assert sum(r["source"] == "injected" for r in meta) == 2 * 2
+
+
+def test_bad_fault_spec_is_refused(repo):
+    with pytest.raises(SystemExit):
+        _cli(repo, "--dry-run", "--fault", "blur=25;rm")
