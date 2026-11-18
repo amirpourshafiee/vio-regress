@@ -51,7 +51,8 @@ MAX_EDGE = 2  # poses one run may lack at EACH end (recorder startup/shutdown ra
 MAX_TRAILING = MAX_EDGE  # backwards-compatible name
 
 
-def pose_equivalent(a: Path, b: Path, max_trailing: int = MAX_EDGE) -> bool:
+def pose_equivalent(a: Path, b: Path, max_trailing: int = MAX_EDGE,
+                    max_leading: int | None = None) -> bool:
     """True if two trajectories are the same estimator output.
 
     Compared pose by pose on the printed values (t, p, q as written to the TUM file). The
@@ -62,7 +63,12 @@ def pose_equivalent(a: Path, b: Path, max_trailing: int = MAX_EDGE) -> bool:
     estimator's first publications (poseimu publisher queue is 2; S4, MH_03). A moved pose,
     a gap in the middle, a different start, or a run cut short by more than that is a
     different trajectory.
+
+    `max_leading` (default: same as `max_trailing`) widens only the allowance at the START. The
+    gate uses it for a recorder that starts late (nightly #7: 5 leading poses lost, #4: 14, every
+    other pose byte-identical); the end stays strict.
     """
+    lead = max_trailing if max_leading is None else max_leading
     ta, tb = load_tum(a), load_tum(b)
     if len(ta) == 0 or len(tb) == 0:
         return False
@@ -72,17 +78,18 @@ def pose_equivalent(a: Path, b: Path, max_trailing: int = MAX_EDGE) -> bool:
     for idx, tr in ((ia, ta), (ib, tb)):
         if not np.all(np.diff(idx) == 1):  # a gap inside the shared block
             return False
-        if idx[0] > max_trailing or len(tr) - 1 - idx[-1] > max_trailing:
+        if idx[0] > lead or len(tr) - 1 - idx[-1] > max_trailing:
             return False
     return np.array_equal(ta.p[ia], tb.p[ib]) and np.array_equal(ta.q[ia], tb.q[ib])
 
 
-def distinct_trajectories(paths, max_trailing: int = MAX_EDGE) -> int:
+def distinct_trajectories(paths, max_trailing: int = MAX_EDGE,
+                          max_leading: int | None = None) -> int:
     """Number of pose-level-distinct trajectories (each compared with one representative
     per group)."""
     reps: list[Path] = []
     for p in paths:
-        if not any(pose_equivalent(p, r, max_trailing) for r in reps):
+        if not any(pose_equivalent(p, r, max_trailing, max_leading) for r in reps):
             reps.append(p)
     return len(reps)
 
