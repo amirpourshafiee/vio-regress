@@ -21,5 +21,20 @@ Rules:
 - Label before any judge has run. Do not look at errors or at pass-1 labels during pass 2.
 - Refine this taxonomy after your first 30 labels (guide 8.1), then re-label those 30.
 
-Examples (guide 8.3 asks for 2 example windows per label): **TODO.** Add 2 window ids per label
-here after the first 30 labels, from windows you are confident about. No real windows exist yet.
+Examples (guide 8.3 asks for 2 example windows per label). Window ids refer to `labels/windows_ui.csv`;
+the sheets are regenerable and are not committed. These were picked from human pass-1 labels
+(`human_v1.csv`, 2026-11-17) as windows whose frames clearly show the label, before any judge run.
+
+| label | examples | what to look at |
+|---|---|---|
+| motion_blur | `395c5a404b`, `8e80ee6a16` | whole frames smeared in nearly every tile, not just one |
+| low_texture | `b9ad0a51fd` | carpet fills the lower half; little to track (second example still open) |
+| illumination | `96f186b4bc`, `583ff18a31` | crushed dark regions next to blown-out windows or walls |
+| handling_event | `d64dc6baa8` | view jumps and tilts, ends close to the floor (second example still open) |
+| no_visual_cause | `91b59958c6` | sharp, well exposed, rich structure in every tile (second example still open) |
+| unclear | `94140fa64d`, `8b8ad410a1` | mixed or changing scene (draped cloth, close board, dark) with no single cause |
+
+Open slots stay empty on purpose: a window goes in only if a second look agrees with the label.
+Known boundary pairs seen while choosing: carpet or floor filling the view is low_texture, not
+no_visual_cause; a camera resting or descending near the floor is handling_event only if the view
+visibly changes within the sheet, otherwise low_texture.
