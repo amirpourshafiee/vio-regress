@@ -106,7 +106,8 @@ difficult sequences. Injected windows fall short of 99 (11 x 9) on the short seq
 MH_04_difficult 0, V1_02_medium 0, V1_03_difficult 3, MH_05_difficult 5, V2_03_difficult 8,
 all others 9. Thresholds and window counts were not changed to fill the gap. Sheets were cut
 from real bags inside the pinned image (`bagframes.extract`), one sequence at a time. The
-sheets and the two window CSVs are not committed (regenerable; sheets are gitignored).
+two window CSVs (`labels/windows.csv`, `labels/windows_ui.csv`) are committed to freeze the window set
+before labeling; the sheets are not (gitignored, regenerable with `--reuse-sheets`/`--sheets-only`).
 
 ## Labeling (S8, S9)
 
