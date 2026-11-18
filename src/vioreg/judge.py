@@ -81,3 +81,50 @@ def judge_window(client, model: str, png: bytes, sequence: str,
         except (ValueError, json.JSONDecodeError) as exc:
             last = exc
     return {"label": "unclear", "confidence": 0.0, "evidence": f"parse failure: {last}"}
+
+
+PROMPT_VERSION = "v1"
+
+LABEL_DESC_V1 = {
+    "motion_blur": "fast motion smears the image; streaked edges across several consecutive frames",
+    "low_texture": "little to track; a blank wall or floor fills most of the frame",
+    "illumination": "too dark, overexposed or flickering; washed out or crushed regions, or brightness changing between frames",
+    "handling_event": "the camera is picked up, set down or carried; sudden large view changes",
+    "no_visual_cause": "the frames look fine (sharp, well exposed, textured); any problem would come from the estimator, configuration or timing",
+    "unclear": "ambiguous or mixed causes; use sparingly",
+}
+LABEL_HELP_V1 = "\n".join(f"- {k}: {v}" for k, v in LABEL_DESC_V1.items())
+
+PROMPT_V1 = """The image is one contact sheet of 12 frames from the left camera of a drone,
+covering about 5 seconds, in time order: left to right, top to bottom. A visual-inertial
+odometry system estimates the drone's motion from images like these.
+
+Pick exactly ONE label for the most plausible visual cause of tracking trouble that you can see
+in the frames:
+{label_help}
+
+Rules: judge only from what is visible in the 12 frames. If the frames look fine, choose
+no_visual_cause. Choose unclear only if you cannot decide. Reply with JSON only, no prose:
+{{"label": "<label>", "confidence": <0..1>, "evidence": "<max 2 sentences>"}}""".format(
+    label_help=LABEL_HELP_V1)
+
+
+def judge_sheet(client, model: str, png: bytes, max_retries: int = 2) -> dict:
+    """Frames-only judging of one contact sheet. Every client call is a billable call, so each
+    retry goes through `client` (the runner counts them). Parse failures become unclear with
+    ok=False and are not trusted as a verdict."""
+    content = [
+        {"type": "image", "source": {"type": "base64", "media_type": "image/png",
+                                     "data": base64.b64encode(png).decode()}},
+        {"type": "text", "text": PROMPT_V1},
+    ]
+    last = None
+    for _ in range(max_retries + 1):
+        resp = client.messages.create(model=model, max_tokens=300,
+                                      messages=[{"role": "user", "content": content}])
+        try:
+            return {**parse_verdict(resp.content[0].text), "ok": True}
+        except (ValueError, json.JSONDecodeError) as exc:
+            last = exc
+    return {"label": "unclear", "confidence": 0.0, "evidence": f"parse failure: {last}"[:400],
+            "ok": False}
