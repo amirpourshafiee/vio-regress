@@ -204,3 +204,44 @@ def test_cli_requires_explicit_cap(tmp_path, capsys):
     with pytest.raises(SystemExit):
         jr.main(["--labels-dir", str(tmp_path)])
     assert "--max-calls" in capsys.readouterr().err
+
+
+class ThinkingFirstClient(FakeClient):
+    """Sonnet 5.5 can put a thinking block (no .text) before the answer text."""
+
+    def create(self, **kw):
+        r = super().create(**kw)
+        text = r.content[0].text
+        r.content = [SimpleNamespace(type="thinking", thinking="hmm"),
+                     SimpleNamespace(type="text", text=text)]
+        return r
+
+
+def test_reply_text_skips_thinking_blocks_and_joins_text():
+    blocks = [SimpleNamespace(type="thinking", thinking="x"),
+              SimpleNamespace(type="text", text="a"), SimpleNamespace(type="text", text="b")]
+    assert judge.reply_text(SimpleNamespace(content=blocks)) == "ab"
+    assert judge.reply_text(SimpleNamespace(content=[SimpleNamespace(text="plain")])) == "plain"
+    assert judge.reply_text(SimpleNamespace(content=[SimpleNamespace(type="thinking")])) == ""
+
+
+def test_thinking_block_before_text_is_handled(tmp_path):
+    d, _ = make_dir(tmp_path, n_dev=1)
+    s = run(d, ThinkingFirstClient(), repeats=1)
+    rows = read_out(d / "out.csv")
+    assert rows[0]["label"] == "motion_blur" and rows[0]["ok"] == "True" and s["calls"] == 1
+
+
+def test_request_leaves_room_for_thinking_and_sets_low_effort(tmp_path):
+    d, _ = make_dir(tmp_path, n_dev=1)
+    c = FakeClient()
+    run(d, c, repeats=1)
+    kw = c.calls[0]
+    assert kw["max_tokens"] >= 1000
+    assert kw["extra_body"] == {"output_config": {"effort": "low"}}
+    assert [r["settings"] for r in read_out(d / "out.csv")] == [judge.REQUEST_SETTINGS_ID]
+
+
+def test_cache_prompt_includes_request_settings():
+    assert judge.REQUEST_SETTINGS_ID in judge.CACHE_PROMPT
+    assert judge.PROMPT_V1 in judge.CACHE_PROMPT

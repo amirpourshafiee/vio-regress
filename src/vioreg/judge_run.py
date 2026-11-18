@@ -25,7 +25,7 @@ from pathlib import Path
 from . import judge
 
 COLUMNS = ["window_id", "split", "run", "label", "confidence", "evidence", "model",
-           "prompt_version", "cached", "ok"]
+           "prompt_version", "settings", "cached", "ok"]
 DEFAULT_MODEL = "claude-sonnet-5-5"
 
 
@@ -92,7 +92,7 @@ def plan_run(labels_dir, split, model, repeats, cache_dir):
     for _, p in wins:
         png = p.read_bytes()
         for r in range(repeats):
-            if not (cache_dir / f"{cache_key(png, judge.PROMPT_V1, model, r)}.json").exists():
+            if not (cache_dir / f"{cache_key(png, judge.CACHE_PROMPT, model, r)}.json").exists():
                 need += 1
     return {"windows": len(wins), "repeats": repeats,
             "calls_total": len(wins) * repeats, "calls_needed": need}
@@ -120,7 +120,7 @@ def run_judge(labels_dir, split, client, model, repeats, max_calls, cache_dir, o
     for rep in range(repeats):           # repeat outermost: a capped run still covers every window
         for wid, p in wins:
             png = p.read_bytes()
-            f = cache_dir / f"{cache_key(png, judge.PROMPT_V1, model, rep)}.json"
+            f = cache_dir / f"{cache_key(png, judge.CACHE_PROMPT, model, rep)}.json"
             if f.exists():
                 v, cached = json.loads(f.read_text()), True
                 v["ok"] = True
@@ -137,6 +137,7 @@ def run_judge(labels_dir, split, client, model, repeats, max_calls, cache_dir, o
             rows.append({"window_id": wid, "split": split, "run": rep, "label": v["label"],
                          "confidence": v["confidence"], "evidence": v["evidence"],
                          "model": model, "prompt_version": judge.PROMPT_VERSION,
+                         "settings": judge.REQUEST_SETTINGS_ID,
                          "cached": cached, "ok": v["ok"]})
         if capped:
             break

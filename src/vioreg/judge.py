@@ -77,12 +77,23 @@ def judge_window(client, model: str, png: bytes, sequence: str,
         resp = client.messages.create(model=model, max_tokens=300,
                                       messages=[{"role": "user", "content": content}])
         try:
-            return parse_verdict(resp.content[0].text)
+            return parse_verdict(reply_text(resp))
         except (ValueError, json.JSONDecodeError) as exc:
             last = exc
     return {"label": "unclear", "confidence": 0.0, "evidence": f"parse failure: {last}"}
 
 
+def reply_text(resp) -> str:
+    """Text of a reply. Models with thinking return thinking blocks (no .text) before the answer,
+    so take only text blocks. Fakes without a .type count as text."""
+    return "".join(b.text for b in resp.content if getattr(b, "type", "text") == "text")
+
+
+# Thinking tokens count toward max_tokens and are billed as output, so leave room and keep the
+# effort low: this is a classification of one image, not a reasoning task.
+MAX_TOKENS = 1500
+EFFORT = "low"
+REQUEST_SETTINGS_ID = f"max_tokens={MAX_TOKENS};effort={EFFORT}"
 PROMPT_VERSION = "v1"
 
 LABEL_DESC_V1 = {
@@ -108,6 +119,8 @@ no_visual_cause. Choose unclear only if you cannot decide. Reply with JSON only,
 {{"label": "<label>", "confidence": <0..1>, "evidence": "<max 2 sentences>"}}""".format(
     label_help=LABEL_HELP_V1)
 
+CACHE_PROMPT = PROMPT_V1 + "\n#" + REQUEST_SETTINGS_ID  # cache key changes with any setting
+
 
 def judge_sheet(client, model: str, png: bytes, max_retries: int = 2) -> dict:
     """Frames-only judging of one contact sheet. Every client call is a billable call, so each
@@ -120,10 +133,11 @@ def judge_sheet(client, model: str, png: bytes, max_retries: int = 2) -> dict:
     ]
     last = None
     for _ in range(max_retries + 1):
-        resp = client.messages.create(model=model, max_tokens=300,
+        resp = client.messages.create(model=model, max_tokens=MAX_TOKENS,
+                                      extra_body={"output_config": {"effort": EFFORT}},
                                       messages=[{"role": "user", "content": content}])
         try:
-            return {**parse_verdict(resp.content[0].text), "ok": True}
+            return {**parse_verdict(reply_text(resp)), "ok": True}
         except (ValueError, json.JSONDecodeError) as exc:
             last = exc
     return {"label": "unclear", "confidence": 0.0, "evidence": f"parse failure: {last}"[:400],
