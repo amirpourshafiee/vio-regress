@@ -6,3 +6,4 @@ data/
 results/
 labels/sheets/
 labels/judge_cache/
+.venv-judge/
