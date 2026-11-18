@@ -50,6 +50,17 @@ In both cases the poses it did record were bit-identical to the other runs. A st
 would fail identical re-runs on recorder races. The allowance of 4 (2 at each end) covers
 exactly those, and `pose_equivalent` now tolerates the same edges.
 
+**Late recorder start (nightly #7, run 44380368789, Intel Xeon 6975P-C).** MH_03_medium run1
+lacked the first 5 poses (0.25 s); every other pose was byte-identical to the baseline, run2
+matched it exactly. Nightly #4 lost 14. The margin of 4 cannot tell that from a real loss, so
+a pose-count failure is waived, with a warning ("run1 was recorded N poses late"), only when
+**nothing else failed** and every run is the baseline trajectory minus at most
+`LATE_START_MAX_POSES` (40, i.e. 2 s) LEADING poses, all other poses bit-identical, end
+unchanged, and a baseline trajectory file exists. A moved pose, a gap, poses lost at the end,
+a later start, an RPE or coverage failure, or no baseline trajectory keep the failure. The
+cause of the late start is a hypothesis (recorder subscribes after the estimator's first
+publications), not proven.
+
 **Consequence of rule 5:** any real `OV_REF` bump or config edit, even an innocent one,
 fails with "needs re-baseline". So the RPE and ATE margins only ever judge results whose
 key matches: the same VIO, image and config on a different host, harness version or
@@ -155,9 +166,10 @@ Tests (`tests/test_gate.py` 32, `tests/test_gate_goldens.py` 7,
   aggregate).
 - **A missing baseline key fails** with "needs re-baseline" (e.g. a changed `config_hash`).
 - **Runs that disagree fail** with "runs disagree" when the runs of one sequence under the same key
-  are not one trajectory (`vioreg.variance.distinct_trajectories` > 1). If nothing but the pose
+  are not one trajectory (`vioreg.variance.distinct_trajectories` > 1, tolerating a late start of
+  up to 40 leading poses). If nothing but the pose
   count failed besides that, the verdict is NONDETERMINISTIC, not QUALITY FAIL: the estimator was
-  not repeatable on that host (first scheduled nightly, run 43743071045, MH_03_medium). Any RPE,
+  not repeatable on that host (reported as "N distinct trajectories"; first scheduled nightly, run 43743071045, MH_03_medium). Any RPE,
   coverage or ok=false failure keeps the QUALITY FAIL label. Margins are unchanged.
 - **The committed margins sit inside the measured gaps.** A guard test pins `rpe_ratio_max`
   strictly between 1.145 and 1.431, against silent loosening.
