@@ -29,6 +29,7 @@ from pathlib import Path
 from . import gate
 
 LABEL = {"pass": "PASS", "needs-rebaseline": "NEEDS RE-BASELINE", "quality-fail": "QUALITY FAIL",
+         "nondeterministic": "NONDETERMINISTIC",
          "missing": "MISSING", "invalid": "INVALID RESULT", "fetch-failed": "DATA FETCH FAILED"}
 
 
@@ -69,7 +70,7 @@ def _host_section(host: Path | None, reference: Path | None) -> list[str]:
 def _sequence_section(results_dir: Path, seq: str, cfg: dict, root: Path, fails: list[str],
                       verdict: str) -> list[str]:
     from .score import find_runs
-    from .variance import distinct_trajectories, pose_equivalent
+    from .variance import distinct_trajectories
 
     out = [f"### {seq}: **{LABEL[verdict]}**", ""]
     for f in fails:
@@ -98,18 +99,26 @@ def _sequence_section(results_dir: Path, seq: str, cfg: dict, root: Path, fails:
     elif not ref or not (Path(root) / ref).is_file():
         out.append("- (a) poses: no baseline trajectory to compare with")
     else:
-        same = []
+        kinds = []
         for _, p in runs:
             try:
-                same.append(pose_equivalent(p, Path(root) / ref))
+                kinds.append(gate.run_vs_baseline(p, Path(root) / ref))
             except Exception:  # noqa: BLE001 - unreadable run: not reproduced
-                same.append(False)
-        state = "reproduced exactly" if all(same) else "differ from the baseline"
-        out.append(f"- (a) poses: {state} ({sum(same)}/{len(same)} runs identical to "
+                kinds.append(("differs", None))
+        n_same = sum(k == "same" for k, _ in kinds)
+        lates = [(i + 1, n) for i, (k, n) in enumerate(kinds) if k == "late"]
+        if any(k == "differs" for k, _ in kinds):
+            state = "differ from the baseline"
+        elif lates:
+            state = "reproduced, but " + ", ".join(
+                f"run{i} was recorded {n} poses late" for i, n in lates)
+        else:
+            state = "reproduced exactly"
+        out.append(f"- (a) poses: {state} ({n_same}/{len(kinds)} runs identical to "
                    f"{ref}){info}")
     if len(runs) > 1:
         try:
-            n = distinct_trajectories([p for _, p in runs])
+            n = distinct_trajectories([p for _, p in runs], max_leading=gate.LATE_START_MAX_POSES)
             out.append(f"  - runs agree with each other: "
                        f"{'yes' if n == 1 else 'NO'} ({n} distinct trajector{'y' if n == 1 else 'ies'})")
         except Exception as e:  # noqa: BLE001

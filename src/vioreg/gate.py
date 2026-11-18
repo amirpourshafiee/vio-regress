@@ -160,8 +160,6 @@ def pose_warnings(results_dir: Path, seq: str, result: dict, cfg: dict,
     """(warnings, notes): a pose-level difference is a warning; a comparison that could not
     be made (no baseline trajectory, no run*.tum next to the result) is only a note."""
     from .score import find_runs
-    from .variance import pose_equivalent
-
     base, _ = find_baseline(cfg, seq, result)
     if base is None:
         return [], []
@@ -174,10 +172,14 @@ def pose_warnings(results_dir: Path, seq: str, result: dict, cfg: dict,
     out = []
     for k, path in runs:
         try:
-            same = pose_equivalent(path, Path(root) / ref)
+            kind, late = run_vs_baseline(path, Path(root) / ref)
         except Exception:  # noqa: BLE001 - an unreadable run is already a hard failure
-            same = False
-        if not same:
+            kind, late = "differs", None
+        if kind == "late":
+            out.append(f"{seq}: run{k} was recorded {late} poses ({late * 0.05:.2f} s) late; every "
+                       f"pose it has is identical to the baseline (recorder start-up, not a "
+                       f"change in the estimator)")
+        elif kind == "differs":
             out.append(f"{seq}: run{k} trajectory differs from the baseline although "
                        f"vio_commit, image_digest and config_hash match "
                        "(behaviour changed: different host, harness or data?)")
@@ -194,13 +196,81 @@ def emit_warning(msg: str) -> None:
 
 
 # ---------------------------------------------------------------- verdicts + scope (S5a)
-VERDICTS = ("pass", "needs-rebaseline", "quality-fail", "missing", "invalid", "fetch-failed")
+VERDICTS = ("pass", "needs-rebaseline", "quality-fail", "nondeterministic", "missing", "invalid",
+            "fetch-failed")
 FETCH_FAILED = "data fetch failed, not a quality result"
+RUNS_DISAGREE = "runs disagree"
+POSE_COUNT = "associated pose count"
+# The recorder (a separate ROS node) can start after the estimator's first publications and then
+# misses LEADING poses; everything it does record is byte-identical to the baseline (nightly #7
+# run 44380368789: 5 poses, 0.25 s, 2270 < 2275 - 4; nightly #4: 14). 40 poses = 2 s at 20 Hz,
+# about 3 times the worst case seen. Margins are NOT changed: the waiver below needs every pose
+# the run has to match the baseline exactly, which a pose-count margin cannot check.
+LATE_START_MAX_POSES = 40
+
+
+def run_vs_baseline(path: Path, ref: Path):
+    """('same', 0) | ('late', k) | ('differs', None) for one run against the baseline
+    trajectory. 'late': the run is the baseline minus its first k poses (k <= LATE_START_MAX_POSES),
+    every other pose bit-identical, end unchanged."""
+    import numpy as np
+
+    from .euroc_io import load_tum
+    from .variance import pose_equivalent
+
+    if pose_equivalent(path, ref):
+        return "same", 0
+    if not pose_equivalent(path, ref, max_leading=LATE_START_MAX_POSES):
+        return "differs", None
+    run, base = load_tum(path), load_tum(ref)
+    _, _, ib = np.intersect1d(run.t, base.t, return_indices=True)
+    return "late", int(ib[0])
+
+
+def runs_disagree(results_dir: Path, seq: str) -> str | None:
+    """Reason if the runs of one sequence (same key, same host, same bag) are not the same
+    trajectory, else None. Serial OpenVINS is expected to be repeatable (S3); when it is not,
+    every metric of that sequence describes a coin toss, so say so instead of letting a
+    pose-count or RPE line look like a code regression. Fewer than 2 runs: no claim."""
+    from .score import find_runs
+    from .variance import distinct_trajectories
+
+    runs = [p for _, p in find_runs(Path(results_dir) / seq)]
+    if len(runs) < 2:
+        return None
+    try:
+        n = distinct_trajectories(runs, max_leading=LATE_START_MAX_POSES)
+    except Exception as e:  # noqa: BLE001 - an unreadable run is already a hard failure
+        return f"{RUNS_DISAGREE}: could not compare runs ({e})"
+    if n == 1:
+        return None
+    return (f"{RUNS_DISAGREE}: {n} distinct trajectories from {len(runs)} runs under the same "
+            f"key (the estimator was not repeatable on this host)")
+
+
+def late_start_only(results_dir: Path, seq: str, result: dict, cfg: dict, root: Path) -> bool:
+    """True if every run is the baseline trajectory, possibly minus leading poses (see
+    LATE_START_MAX_POSES). Needs the baseline trajectory file and at least one run; anything
+    unreadable or different is False, so the pose-count failure stands."""
+    from .score import find_runs
+
+    base, _ = find_baseline(cfg, seq, result)
+    ref = base.get("trajectory") if base else None
+    if not ref or not (Path(root) / ref).is_file():
+        return False
+    runs = find_runs(Path(results_dir) / seq)
+    if not runs:
+        return False
+    try:
+        return all(run_vs_baseline(p, Path(root) / ref)[0] != "differs" for _, p in runs)
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def classify(fails: list[str]) -> str:
     """One verdict per sequence, so a key mismatch is never reported as a quality failure.
-    Precedence: fetch-failed > missing > invalid > needs-rebaseline > quality-fail > pass.
+    Precedence: fetch-failed > missing > invalid > needs-rebaseline > nondeterministic
+    (runs disagree and only the pose count failed) > quality-fail > pass.
     fetch-failed comes first: with no data, every other failure is a consequence of that."""
     if not fails:
         return "pass"
@@ -212,6 +282,11 @@ def classify(fails: list[str]) -> str:
         return "invalid"
     if any(f.startswith("needs re-baseline") for f in fails):
         return "needs-rebaseline"
+    # Runs disagree and nothing but the pose count failed: a repeatability problem, not a
+    # quality one. Any RPE, coverage or ok=false failure keeps the quality-fail label.
+    if any(f.startswith(RUNS_DISAGREE) for f in fails) and all(
+            f.startswith((RUNS_DISAGREE, POSE_COUNT)) for f in fails):
+        return "nondeterministic"
     return "quality-fail"
 
 
@@ -292,6 +367,14 @@ def evaluate_results_dir(results_dir: Path, cfg: dict, require: bool,
             continue
         results[seq] = r
         rep["sequences"][seq] = evaluate_sequence(r, cfg, seq)
+        fl = rep["sequences"][seq]
+        if fl and all(f.startswith(POSE_COUNT) for f in fl) and late_start_only(
+                results_dir, seq, r, cfg, root):
+            rep["sequences"][seq] = []  # late recorder start: poses it has match the baseline
+        if not any(f.startswith("needs re-baseline") for f in rep["sequences"][seq]):
+            why_runs = runs_disagree(results_dir, seq)
+            if why_runs:
+                rep["sequences"][seq].append(why_runs)
         if not rep["sequences"][seq]:
             w, n = pose_warnings(results_dir, seq, r, cfg, root)
             rep["warnings"] += w
