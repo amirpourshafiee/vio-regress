@@ -339,3 +339,56 @@ def test_score_default_image_is_the_pinned_ref(monkeypatch):
                         lambda **kw: seen.update(kw) or dict(PROV))
     score.main(["--seqs", "MH_99_bogus"])
     assert seen["image"] == ir.pinned_ref(env={})
+
+
+# ---------------------------------------------------------------- --ungated (S7 window set)
+def _thr_without_seq(tmp_path):
+    thr = tmp_path / "thr.yaml"
+    thr.write_text("defaults: {align: posyaw}\nsequences:\n  V1_01_easy: {skip_s: 0}\n")
+    return thr
+
+
+def test_unlisted_sequence_still_fails_without_ungated(layout, tmp_path, monkeypatch, capsys):
+    gt, gt_csv, res = layout
+    monkeypatch.setattr(score, "collect_provenance", lambda **kw: dict(PROV))
+    save_tum(est_with_known_error(gt, 0.02), res / SEQ / "run1.tum")
+    args = ["--seqs", SEQ, "--out", str(res), "--data", str(tmp_path / "data"),
+            "--thresholds", str(_thr_without_seq(tmp_path))]
+    assert score.main(args) == 1
+    assert "not in" in capsys.readouterr().err
+    assert not (res / f"{SEQ}.json").exists()
+
+
+def test_ungated_scores_an_unlisted_sequence_with_defaults_and_frozen_keys(layout, tmp_path,
+                                                                          monkeypatch, capsys):
+    gt, gt_csv, res = layout
+    monkeypatch.setattr(score, "collect_provenance", lambda **kw: dict(PROV))
+    save_tum(est_with_known_error(gt, 0.02), res / SEQ / "run1.tum")
+    args = ["--seqs", SEQ, "--out", str(res), "--data", str(tmp_path / "data"),
+            "--thresholds", str(_thr_without_seq(tmp_path)), "--ungated"]
+    assert score.main(args) == 0
+    out = capsys.readouterr().out
+    assert f"{SEQ}: UNGATED" in out and "skip_s=0" in out
+    r = json.loads((res / f"{SEQ}.json").read_text())
+    assert r["align"] == "posyaw" and r["skip_s"] == 0.0 and r["ate"]["ok"]
+    assert "ungated" not in r, "the result JSON key set stays frozen"
+
+
+def test_ungated_does_not_change_a_listed_sequence(layout, tmp_path, monkeypatch, capsys):
+    gt, gt_csv, res = layout
+    monkeypatch.setattr(score, "collect_provenance", lambda **kw: dict(PROV))
+    save_tum(est_with_known_error(gt, 0.02), res / SEQ / "run1.tum")
+    thr = tmp_path / "thr.yaml"
+    thr.write_text("defaults: {align: posyaw}\nsequences:\n  MH_01_easy: {skip_s: 7}\n")
+    args = ["--seqs", SEQ, "--out", str(res), "--data", str(tmp_path / "data"),
+            "--thresholds", str(thr), "--ungated"]
+    assert score.main(args) == 0
+    assert json.loads((res / f"{SEQ}.json").read_text())["skip_s"] == 7.0
+    assert "UNGATED" not in capsys.readouterr().out
+
+
+def test_ungated_still_refuses_a_name_that_is_not_a_euroc_sequence(tmp_path, monkeypatch):
+    monkeypatch.setattr(score, "collect_provenance", lambda **kw: dict(PROV))
+    assert score.main(["--seqs", "MH_99_bogus", "--out", str(tmp_path), "--ungated",
+                       "--thresholds", str(_thr_without_seq(tmp_path))]) == 1
+    assert not (tmp_path / "MH_99_bogus.json").exists()

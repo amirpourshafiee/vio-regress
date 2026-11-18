@@ -11,7 +11,8 @@
 Writes data/faulted/<seq>__<fault>_<params>/<seq>/<seq>.bag. The inner <seq>/ makes the
 directory a drop-in DATA root for scripts/run_sequence.sh. It also writes fault.json next to
 it and appends one row to labels/fault_manifest.csv (run_id, sequence, fault, params, seed,
-created_utc). The manifest is the ONLY record of the fault: result JSONs stay frozen, and
+created_utc); rebuilding a deleted copy does not add a second identical row, and a row
+with the same run_id but other fields is refused. The manifest is the ONLY record of the fault: result JSONs stay frozen, and
 the manifest is hidden from the labeling UI.
 
 Safety: the output root must be <repo>/data/faulted and must not resolve inside the original
@@ -139,7 +140,34 @@ def docker_apply(src_bag: Path, out_bag: Path, fault, params, seed) -> dict:
     return json.loads(summary.read_text())
 
 
+IDENTITY_FIELDS = ("run_id", "sequence", "fault", "params", "seed")  # created_utc ignored
+
+
+def manifest_status(path: Path, row: dict) -> str:
+    """'new' (no row for this run_id), 'same' (a row with identical run_id, sequence, fault,
+    params and seed exists: rebuilding a deleted copy, S7) or raise Refused when a row with
+    this run_id disagrees on any of those fields (two different faults under one id)."""
+    if not Path(path).exists():
+        return "new"
+    want = {k: str(row[k]) for k in IDENTITY_FIELDS}
+    with open(path, newline="") as f:
+        for r in csv.DictReader(f):
+            if r.get("run_id") != want["run_id"]:
+                continue
+            have = {k: r.get(k, "") for k in IDENTITY_FIELDS}
+            if have == want:
+                return "same"
+            diff = ", ".join(f"{k}: {have[k]!r} != {want[k]!r}" for k in IDENTITY_FIELDS
+                             if have[k] != want[k])
+            raise Refused(f"manifest already has run_id {want['run_id']} with different "
+                          f"fields ({diff})")
+    return "new"
+
+
 def append_manifest(path: Path, row: dict) -> None:
+    """Append one row, unless an identical row (created_utc ignored) is already there."""
+    if manifest_status(path, row) == "same":
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     new = not path.exists() or path.stat().st_size == 0
     with open(path, "a", newline="") as f:
@@ -192,6 +220,10 @@ def main(argv=None, repo_root: Path = ROOT, apply=docker_apply, now=None) -> int
         if not src.is_file():
             raise Refused(f"original bag {src} missing (scripts/fetch_euroc.sh)")
         out_dir = output_dir(repo_root, out_root, data_root, rid)
+        manifest = repo_root / "labels" / "fault_manifest.csv"
+        mrow = {"run_id": rid, "sequence": a.seq, "fault": fault,
+                "params": json.dumps(params, sort_keys=True), "seed": a.seed}
+        in_manifest = manifest_status(manifest, mrow) == "same"  # refuses a conflicting row
     except (bf.BagFaultError, Refused) as e:
         print(f"fault_cli: REFUSED: {e}", file=sys.stderr)
         return 2
@@ -216,11 +248,9 @@ def main(argv=None, repo_root: Path = ROOT, apply=docker_apply, now=None) -> int
             "seed": a.seed, "created_utc": created, "original": str(src),
             "original_sha256": before, "bag": str(out_bag), "summary": summary}
     (out_dir / "fault.json").write_text(json.dumps(meta, indent=1, sort_keys=True) + "\n")
-    append_manifest(repo_root / "labels" / "fault_manifest.csv",
-                    {"run_id": rid, "sequence": a.seq, "fault": fault,
-                     "params": json.dumps(params, sort_keys=True), "seed": a.seed,
-                     "created_utc": created})
-    print(f"fault_cli: {rid} -> {out_bag}")
+    append_manifest(manifest, dict(mrow, created_utc=created))
+    print(f"fault_cli: {rid} -> {out_bag}"
+          + ("  (rebuilt; manifest row already present, not appended)" if in_manifest else ""))
     print(f"  run:   RUNS=2 DATA={out_dir} bash scripts/run_sequence.sh {a.seq} results/faults/{rid}")
     if a.print_data_root:
         print(out_dir)

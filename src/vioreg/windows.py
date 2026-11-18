@@ -24,6 +24,36 @@ SOURCES = ("natural", "injected", "control")
 META_FIELDS = ["window_id", "sequence", "run_id", "source", "t0", "t1", "peak_err_m", "sheet"]
 UI_FIELDS = ["window_id", "sheet"]
 ID_SALT = "vioreg-windows-v1"
+# Seconds dropped after each run's first pose before windows are cut: the estimator's
+# start-up transient (S7 Stage 1, MH_01_easy: most "worst" windows were the first 40 s).
+# NOT the gate's skip_s, which counts from ground-truth start and removes no poses on the
+# gated sequences (docs/crosscheck.md); the two are different quantities.
+TRIM_START_S = 15.0
+# Minimum time between an injected window and any natural or control window of the same
+# sequence. 0 = they never overlap, but may touch. A 5 s gap (one window length) was tried to
+# avoid the same scene clean and then faulted (S7 Stage 1, MH_01_easy: gamma 89.7 s right
+# after control 84.7-89.7 s), but on the 83-150 s sequences it left no room: MH_03_medium got
+# 1 of 9 injected windows. --inj-gap-s can still raise it.
+INJ_GAP_S = 0.0
+
+
+def rank_windows(t: np.ndarray, err: np.ndarray, win_s: float = 5.0) -> list[dict]:
+    """Consecutive win_s windows (5+ poses each), worst peak error first."""
+    edges = np.arange(t[0], t[-1], win_s)
+    rows = []
+    for a in edges:
+        m = (t >= a) & (t < a + win_s)
+        if m.sum() < 5:
+            continue
+        rows.append({"t0": float(a), "t1": float(a + win_s), "peak_err_m": float(err[m].max())})
+    rows.sort(key=lambda r: r["peak_err_m"], reverse=True)
+    return rows
+
+
+def overlaps(t0: float, t1: float, avoid, gap_s: float = 0.0) -> bool:
+    """[t0, t1) overlaps any (a0, a1) in avoid, or comes closer to one than gap_s. With
+    gap_s=0, windows that only touch do not overlap; a distance of exactly gap_s is allowed."""
+    return any(t0 < a1 + gap_s and a0 - gap_s < t1 for a0, a1 in avoid)
 
 
 def pick_windows(t: np.ndarray, err: np.ndarray, win_s: float = 5.0,
@@ -34,17 +64,19 @@ def pick_windows(t: np.ndarray, err: np.ndarray, win_s: float = 5.0,
     windows (source='control'). Controls matter: a judge that always says
     'there is a visual problem' must be caught by windows where nothing went wrong.
     """
-    edges = np.arange(t[0], t[-1], win_s)
-    rows = []
-    for a in edges:
-        m = (t >= a) & (t < a + win_s)
-        if m.sum() < 5:
-            continue
-        rows.append({"t0": float(a), "t1": float(a + win_s), "peak_err_m": float(err[m].max())})
-    rows.sort(key=lambda r: r["peak_err_m"], reverse=True)
+    rows = rank_windows(t, err, win_s)
     worst = [dict(r, source="natural") for r in rows[:top_k]]
     best = [dict(r, source="control") for r in rows[::-1][:control_k]]
     return worst + best
+
+
+def trim_start(t: np.ndarray, err: np.ndarray, trim_s: float = TRIM_START_S):
+    """Drop the first trim_s seconds counted from the run's first pose (t[0] of its own
+    error series), not from ground-truth start."""
+    if trim_s <= 0 or len(t) == 0:
+        return t, err
+    keep = t >= t[0] + trim_s
+    return t[keep], err[keep]
 
 
 def error_series(est: Trajectory, gt: Trajectory, align: str = "posyaw",
@@ -78,12 +110,20 @@ def frame_times(t0: float, t1: float, n: int = N_FRAMES) -> np.ndarray:
 
 
 def run_windows(run_id: str, sequence: str, t: np.ndarray, err: np.ndarray, *,
-                injected: bool, win_s: float = 5.0, top_k: int = 8, control_k: int = 5) -> list[dict]:
+                injected: bool, win_s: float = 5.0, top_k: int = 8, control_k: int = 5,
+                avoid=(), gap_s: float = 0.0) -> list[dict]:
     """Windows of one run as metadata rows (no sheet yet).
 
     Natural runs give top_k worst + control_k best. Injected runs give top_k worst only,
-    labelled 'injected': a faulted run's best windows are not a clean control."""
-    rows = pick_windows(t, err, win_s, top_k, 0 if injected else control_k)
+    labelled 'injected': a faulted run's best windows are not a clean control. With `avoid`
+    ((t0, t1) intervals: the natural and control windows of the same sequence), an injected
+    run skips every window that overlaps one of them or lies closer than gap_s, and takes the
+    next-worst, so a labeler never sees the same moment clean and faulted. Fewer than top_k may remain; the caller reports that."""
+    if injected and avoid:
+        rows = [dict(r, source="natural") for r in rank_windows(t, err, win_s)
+                if not overlaps(r["t0"], r["t1"], avoid, gap_s)][:top_k]
+    else:
+        rows = pick_windows(t, err, win_s, top_k, 0 if injected else control_k)
     out = []
     for r in rows:
         src = "injected" if injected and r["source"] == "natural" else r["source"]
