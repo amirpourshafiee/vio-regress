@@ -117,3 +117,13 @@ before labeling; the sheets are not (gitignored, regenerable with `--reuse-sheet
 browser, `d` downloads `human_v1.csv` (`window_id,label,labeled_at_utc,notes`). Pass 2 relabels a
 random 40 and downloads `human_v1_pass2.csv`. `?demo` opens it with synthetic sheets. The codebook
 still needs 2 example windows per label (guide 8.3); the real window set now exists.
+
+## Dev/test split
+
+`labels/split.csv` (window_id,split) was written once by `python -m vioreg.split` from
+`labels/windows.csv` (sources) and the frozen `labels/human_v1.csv` (labels), stratified by label
+and source, 40 % dev and 60 % test (85 dev, 128 test, seed 20261117). The prompt of the judge may
+be tuned on dev only; the test split is run once, when the owner says. The file holds no labels
+or sources, so judge code can read it without seeing them. The command refuses to overwrite an
+existing split, and a test checks that the committed split covers the committed window set
+exactly once.
